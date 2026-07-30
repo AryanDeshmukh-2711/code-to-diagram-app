@@ -55,6 +55,8 @@ services:
     volumes:
       - ./api:/srv/api
       - ./shared:/srv/shared
+      # The exported CPM JSON Schema. Written here, read by web to generate TS.
+      - ./schemas:/srv/schemas
     depends_on:
       postgres:
         condition: service_healthy
@@ -101,6 +103,8 @@ services:
       - ./web:/app
       - web_node_modules:/app/node_modules
       - web_next:/app/.next
+      # Read-only: the schema is generated from the Pydantic models, never here.
+      - ./schemas:/schemas:ro
     depends_on:
       api:
         condition: service_started

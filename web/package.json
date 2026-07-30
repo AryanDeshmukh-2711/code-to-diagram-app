@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "vitest"
+    "test": "vitest",
+    "gen:types": "json2ts -i ../schemas/cpm.schema.json -o src/lib/cpm.generated.ts",
+    "gen:types:check": "json2ts -i ../schemas/cpm.schema.json -o /tmp/cpm.generated.ts && diff -u src/lib/cpm.generated.ts /tmp/cpm.generated.ts"
   },
   "dependencies": {
     "next": "^15.1.0",
@@ -29,6 +31,7 @@
     "autoprefixer": "^10.4.20",
     "eslint": "^8.57.1",
     "eslint-config-next": "^15.1.0",
+    "json-schema-to-typescript": "^15.0.3",
     "vitest": "^2.1.8"
   }
 }
