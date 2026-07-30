@@ -1,0 +1,31 @@
+@startuml
+!theme plain
+left to right direction
+skinparam packageStyle rectangle
+skinparam shadowing false
+
+actor "Member" as member
+actor "Librarian" as librarian
+actor "Administrator" as administrator
+
+rectangle "Library Management System" {
+  usecase "Borrow Book" as uc_borrow_book
+  usecase "Return Book" as uc_return_book
+  usecase "Reserve Book" as uc_reserve_book
+  usecase "Pay Fine" as uc_pay_fine
+  usecase "Manage Catalogue" as uc_manage_catalogue
+  usecase "Manage Members" as uc_manage_members
+}
+
+member --> uc_borrow_book
+librarian --> uc_borrow_book
+member --> uc_return_book
+librarian --> uc_return_book
+member --> uc_reserve_book
+member --> uc_pay_fine
+librarian --> uc_pay_fine
+librarian --> uc_manage_catalogue
+administrator --> uc_manage_catalogue
+administrator --> uc_manage_members
+
+@enduml
