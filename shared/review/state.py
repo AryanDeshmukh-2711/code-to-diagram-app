@@ -23,7 +23,9 @@ _EXPLANATIONS = {
     "duplicate_id": "Two items share an identity. Rename one of them.",
     "duplicate_entity_name": "Two things have the same name. Merge them, or rename one.",
     "duplicate_actor_name": "Two people have the same name. Merge them, or rename one.",
-    "unknown_entity_ref": "This points at a thing that is not in the list. Re-link it or remove it.",
+    "unknown_entity_ref": (
+        "This points at a thing that is not in the list. Re-link it or remove it."
+    ),
     "unknown_actor_ref": "This lists a person who is not in the Who uses it list.",
     "unknown_component_ref": "This refers to a part that no longer exists.",
     "unknown_participant_ref": "This step involves someone or something not in the list.",

@@ -59,7 +59,7 @@ def _new_id(name: str, kind: str) -> str:
 
 
 def rename_entity(draft: CPMDraft, entity_id: str, new_name: str) -> EditOutcome:
-    entity = _require(draft.entities, entity_id, "entity")
+    _require(draft.entities, entity_id, "entity")
     cleaned = " ".join(new_name.split())
     new_id = _new_id(cleaned, "entity")
 
