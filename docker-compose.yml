@@ -1,0 +1,112 @@
+name: ai-software-architect
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-asa}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-asa}
+      POSTGRES_DB: ${POSTGRES_DB:-asa}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-asa} -d ${POSTGRES_DB:-asa}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  # Hard dependency: Mermaid cannot render use case, component or deployment
+  # diagrams. Provisioned from M1 deliberately — see CLAUDE.md.
+  plantuml:
+    image: plantuml/plantuml-server:jetty
+    environment:
+      PLANTUML_LIMIT_SIZE: "16384"
+    ports:
+      - "${PLANTUML_PORT:-8081}:8080"
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://asa:asa@postgres:5432/asa}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      PLANTUML_SERVER_URL: ${PLANTUML_SERVER_URL:-http://plantuml:8080}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - ./api:/srv/api
+      - ./shared:/srv/shared
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      plantuml:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health/live', timeout=3).status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://asa:asa@postgres:5432/asa}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      PLANTUML_SERVER_URL: ${PLANTUML_SERVER_URL:-http://plantuml:8080}
+    volumes:
+      - ./worker:/srv/worker
+      - ./shared:/srv/shared
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+      WATCHPACK_POLLING: "true"
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    volumes:
+      - ./web:/app
+      - web_node_modules:/app/node_modules
+      - web_next:/app/.next
+    depends_on:
+      api:
+        condition: service_started
+
+volumes:
+  pgdata:
+  redisdata:
+  web_node_modules:
+  web_next:
