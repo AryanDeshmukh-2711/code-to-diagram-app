@@ -40,6 +40,28 @@ services:
     ports:
       - "${PLANTUML_PORT:-8081}:8080"
 
+  # Mermaid rendering, for the ER diagram. Behind a profile because Mermaid
+  # renders in a browser, so the companion carries a headless Chromium — about
+  # a gigabyte of image. Excluded from the default `up`; start it with:
+  #   docker compose --profile mermaid up -d
+  # Until then the ER diagram returns a failed artefact and every other diagram
+  # in the run still completes, which is FR-11/NFR-R2 earning its keep.
+  kroki:
+    image: yuzutech/kroki:latest
+    profiles: ["mermaid"]
+    environment:
+      KROKI_MERMAID_HOST: kroki-mermaid
+    ports:
+      - "${KROKI_PORT:-8082}:8000"
+    depends_on:
+      - kroki-mermaid
+
+  kroki-mermaid:
+    image: yuzutech/kroki-mermaid:latest
+    profiles: ["mermaid"]
+    expose:
+      - "8002"
+
   api:
     build:
       context: .
@@ -93,6 +115,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://asa:asa@postgres:5432/asa}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       PLANTUML_SERVER_URL: ${PLANTUML_SERVER_URL:-http://plantuml:8080}
+      MERMAID_RENDERER_URL: ${MERMAID_RENDERER_URL:-http://kroki:8000}
       LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
       LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:11434}
       LLM_OPENAI_BASE_URL: ${LLM_OPENAI_BASE_URL:-}

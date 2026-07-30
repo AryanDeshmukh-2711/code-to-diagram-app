@@ -1,0 +1,85 @@
+@startuml
+!theme plain
+hide empty members
+skinparam classAttributeIconSize 0
+skinparam shadowing false
+
+class "Book" as book {
+  + isbn : string [key]
+  + title : string [required]
+  + author : string [required]
+  + publishedYear : integer
+  + copiesTotal : integer [required]
+  + copiesAvailable : integer [required]
+  --
+  + isAvailable() : boolean
+  + reserve(memberId: string) : Reservation
+}
+
+class "Person" as person {
+  + personId : string [key]
+  + fullName : string [required]
+  + email : string [required]
+  + phone : string
+}
+
+class "Member" as member {
+  + memberId : string [key]
+  + joinedOn : date [required]
+  + borrowingLimit : integer [required]
+  + isActive : boolean [required]
+  --
+  + canBorrow() : boolean
+  + outstandingFines() : decimal
+}
+
+class "Librarian" as librarian {
+  + staffId : string [key]
+  + desk : string
+  --
+  + issueLoan(memberId: string, isbn: string) : Loan
+}
+
+class "Category" as category {
+  + categoryId : string [key]
+  + name : string [required]
+}
+
+class "Loan" as loan {
+  + loanId : string [key]
+  + borrowedOn : date [required]
+  + dueOn : date [required]
+  + returnedOn : date
+  --
+  + isOverdue() : boolean
+  + renew(days: integer) : boolean
+}
+
+class "Reservation" as reservation {
+  + reservationId : string [key]
+  + placedOn : date [required]
+  + expiresOn : date [required]
+  --
+  + cancel() : void
+}
+
+class "Fine" as fine {
+  + fineId : string [key]
+  + amount : decimal [required]
+  + reason : string [required]
+  + paidOn : date
+  --
+  + pay(amount: decimal) : void
+}
+
+member --|> person : is a
+librarian --|> person : is a
+member --> "1..*" loan : borrows
+book --> "1..*" loan : issued as
+category o-- "1..*" book : groups
+loan *-- "0..1" fine : incurs
+member --> "0..*" reservation : places
+book --> "0..*" reservation : has
+librarian ..> loan : manages
+
+@enduml

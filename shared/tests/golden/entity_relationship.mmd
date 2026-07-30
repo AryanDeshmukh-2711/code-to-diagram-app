@@ -1,0 +1,55 @@
+erDiagram
+    Book {
+        string isbn PK
+        string title
+        string author
+        integer publishedYear
+        integer copiesTotal
+        integer copiesAvailable
+    }
+    Person {
+        string personId PK
+        string fullName
+        string email
+        string phone
+    }
+    Member {
+        string memberId PK
+        date joinedOn
+        integer borrowingLimit
+        boolean isActive
+    }
+    Librarian {
+        string staffId PK
+        string desk
+    }
+    Category {
+        string categoryId PK
+        string name
+    }
+    Loan {
+        string loanId PK
+        date borrowedOn
+        date dueOn
+        date returnedOn
+    }
+    Reservation {
+        string reservationId PK
+        date placedOn
+        date expiresOn
+    }
+    Fine {
+        string fineId PK
+        decimal amount
+        string reason
+        date paidOn
+    }
+    Member ||--|| Person : "is a"
+    Librarian ||--|| Person : "is a"
+    Member ||..|{ Loan : "borrows"
+    Book ||..|{ Loan : "issued as"
+    Category ||--|{ Book : "groups"
+    Loan ||--o| Fine : "incurs"
+    Member ||..o{ Reservation : "places"
+    Book ||..o{ Reservation : "has"
+    Librarian ||..o{ Loan : "manages"

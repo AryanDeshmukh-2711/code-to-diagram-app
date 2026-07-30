@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 COMPOSE := docker compose
 
-.PHONY: help dev down logs test lint fmt types types-check health clean
+.PHONY: help dev down logs test lint fmt golden types types-check health clean
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -22,6 +22,10 @@ test: ## Run api, shared and web test suites
 	$(COMPOSE) run --rm --no-deps api pytest -q tests
 	$(COMPOSE) run --rm --no-deps api pytest -q ../shared/tests
 	$(COMPOSE) run --rm --no-deps web npm run test -- --run
+
+golden: ## Regenerate the golden diagram sources, then review the diff
+	$(COMPOSE) run --rm --no-deps api python ../shared/tests/regenerate_golden.py
+	@git --no-pager diff --stat -- shared/tests/golden || true
 
 types: ## Regenerate the CPM JSON Schema and the TypeScript types from it
 	$(COMPOSE) run --rm --no-deps api python -m cpm.export_schema ../schemas/cpm.schema.json
