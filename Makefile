@@ -15,8 +15,12 @@ down: ## Stop the stack and remove volumes
 logs: ## Tail logs for all services
 	$(COMPOSE) logs -f
 
-test: ## Run api, cpm and web test suites
-	$(COMPOSE) run --rm --no-deps api pytest -q tests ../shared/tests
+# Two invocations, not one: pytest picks rootdir from the common ancestor of
+# its arguments, so a combined run lands on /srv and reads neither package's
+# config — including asyncio_mode.
+test: ## Run api, shared and web test suites
+	$(COMPOSE) run --rm --no-deps api pytest -q tests
+	$(COMPOSE) run --rm --no-deps api pytest -q ../shared/tests
 	$(COMPOSE) run --rm --no-deps web npm run test -- --run
 
 types: ## Regenerate the CPM JSON Schema and the TypeScript types from it

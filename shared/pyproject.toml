@@ -1,19 +1,25 @@
 [project]
-name = "asa-cpm"
+name = "asa-shared"
 version = "0.1.0"
-description = "Canonical Project Model — the single source of truth every artefact renders from."
+description = "Code shared by the api and worker: the Canonical Project Model, and the LLM Gateway."
 requires-python = ">=3.12"
-dependencies = ["pydantic>=2.9"]
+dependencies = ["pydantic>=2.9", "httpx>=0.28"]
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["cpm*"]
+include = ["cpm*", "llm*"]
 
 [tool.setuptools.package-data]
 cpm = ["fixtures/*.json"]
+
+[tool.pytest.ini_options]
+# Needed here as well as in api/pyproject.toml: when pytest is invoked with
+# shared/tests as its argument, rootdir resolves to shared/ and the api config
+# is never read — which silently turns every async test into a no-op failure.
+asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 100

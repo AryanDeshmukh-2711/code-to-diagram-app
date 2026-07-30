@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "AI Software Architect — async generation workers"
 requires-python = ">=3.12"
 dependencies = [
-    "asa-cpm",
+    "asa-shared",
     "arq>=0.26",
     "redis>=5.2",
     "httpx>=0.28",

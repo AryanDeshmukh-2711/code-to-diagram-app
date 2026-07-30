@@ -50,6 +50,16 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://asa:asa@postgres:5432/asa}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       PLANTUML_SERVER_URL: ${PLANTUML_SERVER_URL:-http://plantuml:8080}
+      # Ollama runs on the host so it can reach the GPU.
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:11434}
+      LLM_OPENAI_BASE_URL: ${LLM_OPENAI_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      # The no-hardcoded-models guardrail scans the whole repo, not just the
+      # directories this service mounts.
+      ASA_REPO_ROOT: /srv/repo
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${API_PORT:-8000}:8000"
     volumes:
@@ -57,6 +67,8 @@ services:
       - ./shared:/srv/shared
       # The exported CPM JSON Schema. Written here, read by web to generate TS.
       - ./schemas:/srv/schemas
+      # Read-only, and only so the guardrail test can see every file.
+      - .:/srv/repo:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -81,6 +93,12 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://asa:asa@postgres:5432/asa}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       PLANTUML_SERVER_URL: ${PLANTUML_SERVER_URL:-http://plantuml:8080}
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:11434}
+      LLM_OPENAI_BASE_URL: ${LLM_OPENAI_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./worker:/srv/worker
       - ./shared:/srv/shared
