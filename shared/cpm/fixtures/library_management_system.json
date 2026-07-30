@@ -1,0 +1,532 @@
+{
+  "meta": {
+    "projectName": "Library Management System",
+    "description": "A web-based system for a college library: cataloguing books, issuing and returning loans, handling reservations, and assessing overdue fines.",
+    "authors": ["Aryan Vijay Deshmukh"],
+    "version": "1.0",
+    "createdAt": "2026-07-30T00:00:00Z"
+  },
+  "actors": [
+    {
+      "id": "member",
+      "name": "Member",
+      "description": "A registered library user who borrows and reserves books.",
+      "isPrimary": true
+    },
+    {
+      "id": "librarian",
+      "name": "Librarian",
+      "description": "Staff member who issues loans, accepts returns and maintains the catalogue.",
+      "isPrimary": true
+    },
+    {
+      "id": "administrator",
+      "name": "Administrator",
+      "description": "Manages member accounts, staff accounts and system configuration.",
+      "isPrimary": false
+    }
+  ],
+  "entities": [
+    {
+      "id": "book",
+      "name": "Book",
+      "description": "A catalogued title held by the library.",
+      "attributes": [
+        { "name": "isbn", "type": "string", "isKey": true, "isRequired": true },
+        { "name": "title", "type": "string", "isKey": false, "isRequired": true },
+        { "name": "author", "type": "string", "isKey": false, "isRequired": true },
+        { "name": "publishedYear", "type": "integer", "isKey": false, "isRequired": false },
+        { "name": "copiesTotal", "type": "integer", "isKey": false, "isRequired": true },
+        { "name": "copiesAvailable", "type": "integer", "isKey": false, "isRequired": true }
+      ],
+      "methods": [
+        { "name": "isAvailable", "returns": "boolean", "params": [] },
+        { "name": "reserve", "returns": "Reservation", "params": ["memberId: string"] }
+      ]
+    },
+    {
+      "id": "person",
+      "name": "Person",
+      "description": "Shared identity attributes for members and librarians.",
+      "attributes": [
+        { "name": "personId", "type": "string", "isKey": true, "isRequired": true },
+        { "name": "fullName", "type": "string", "isKey": false, "isRequired": true },
+        { "name": "email", "type": "string", "isKey": false, "isRequired": true },
+        { "name": "phone", "type": "string", "isKey": false, "isRequired": false }
+      ],
+      "methods": []
+    },
+    {
+      "id": "member",
+      "name": "Member",
+      "description": "A person entitled to borrow books, with a borrowing limit.",
+      "attributes": [
+        { "name": "memberId", "type": "string", "isKey": true, "isRequired": true },
+        { "name": "joinedOn", "type": "date", "isKey": false, "isRequired": true },
+        { "name": "borrowingLimit", "type": "integer", "isKey": false, "isRequired": true },
+        { "name": "isActive", "type": "boolean", "isKey": false, "isRequired": true }
+      ],
+      "methods": [
+        { "name": "canBorrow", "returns": "boolean", "params": [] },
+        { "name": "outstandingFines", "returns": "decimal", "params": [] }
+      ]
+    },
+    {
+      "id": "librarian",
+      "name": "Librarian",
+      "description": "A person employed to operate the lending desk.",
+      "attributes": [
+        { "name": "staffId", "type": "string", "isKey": true, "isRequired": true },
+        { "name": "desk", "type": "string", "isKey": false, "isRequired": false }
+      ],
+      "methods": [{ "name": "issueLoan", "returns": "Loan", "params": ["memberId: string", "isbn: string"] }]
+    },
+    {
+      "id": "category",
+      "name": "Category",
+      "description": "A subject classification grouping books.",
+      "attributes": [
+        { "name": "categoryId", "type": "string", "isKey": true, "isRequired": true },
+        { "name": "name", "type": "string", "isKey": false, "isRequired": true }
+      ],
+      "methods": []
+    },
+    {
+      "id": "loan",
+      "name": "Loan",
+      "description": "A single borrowing of a book by a member.",
+      "attributes": [
+        { "name": "loanId", "type": "string", "isKey": true, "isRequired": true },
+        { "name": "borrowedOn", "type": "date", "isKey": false, "isRequired": true },
+        { "name": "dueOn", "type": "date", "isKey": false, "isRequired": true },
+        { "name": "returnedOn", "type": "date", "isKey": false, "isRequired": false }
+      ],
+      "methods": [
+        { "name": "isOverdue", "returns": "boolean", "params": [] },
+        { "name": "renew", "returns": "boolean", "params": ["days: integer"] }
+      ]
+    },
+    {
+      "id": "reservation",
+      "name": "Reservation",
+      "description": "A member's claim on a book that is currently on loan.",
+      "attributes": [
+        { "name": "reservationId", "type": "string", "isKey": true, "isRequired": true },
+        { "name": "placedOn", "type": "date", "isKey": false, "isRequired": true },
+        { "name": "expiresOn", "type": "date", "isKey": false, "isRequired": true }
+      ],
+      "methods": [{ "name": "cancel", "returns": "void", "params": [] }]
+    },
+    {
+      "id": "fine",
+      "name": "Fine",
+      "description": "A monetary penalty raised against an overdue or lost loan.",
+      "attributes": [
+        { "name": "fineId", "type": "string", "isKey": true, "isRequired": true },
+        { "name": "amount", "type": "decimal", "isKey": false, "isRequired": true },
+        { "name": "reason", "type": "string", "isKey": false, "isRequired": true },
+        { "name": "paidOn", "type": "date", "isKey": false, "isRequired": false }
+      ],
+      "methods": [{ "name": "pay", "returns": "void", "params": ["amount: decimal"] }]
+    }
+  ],
+  "relationships": [
+    {
+      "id": "rel-member-is-a-person",
+      "from": "member",
+      "to": "person",
+      "type": "inheritance",
+      "label": "is a"
+    },
+    {
+      "id": "rel-librarian-is-a-person",
+      "from": "librarian",
+      "to": "person",
+      "type": "inheritance",
+      "label": "is a"
+    },
+    {
+      "id": "rel-member-borrows-loan",
+      "from": "member",
+      "to": "loan",
+      "type": "association",
+      "cardinality": "1..*",
+      "label": "borrows"
+    },
+    {
+      "id": "rel-book-issued-as-loan",
+      "from": "book",
+      "to": "loan",
+      "type": "association",
+      "cardinality": "1..*",
+      "label": "issued as"
+    },
+    {
+      "id": "rel-category-groups-book",
+      "from": "category",
+      "to": "book",
+      "type": "aggregation",
+      "cardinality": "1..*",
+      "label": "groups"
+    },
+    {
+      "id": "rel-loan-incurs-fine",
+      "from": "loan",
+      "to": "fine",
+      "type": "composition",
+      "cardinality": "0..1",
+      "label": "incurs"
+    },
+    {
+      "id": "rel-member-places-reservation",
+      "from": "member",
+      "to": "reservation",
+      "type": "association",
+      "cardinality": "0..*",
+      "label": "places"
+    },
+    {
+      "id": "rel-book-has-reservation",
+      "from": "book",
+      "to": "reservation",
+      "type": "association",
+      "cardinality": "0..*",
+      "label": "has"
+    },
+    {
+      "id": "rel-librarian-manages-loan",
+      "from": "librarian",
+      "to": "loan",
+      "type": "dependency",
+      "label": "manages"
+    }
+  ],
+  "useCases": [
+    {
+      "id": "uc-borrow-book",
+      "name": "Borrow Book",
+      "actors": ["member", "librarian"],
+      "preconditions": [
+        "The member is registered and active.",
+        "The member has not reached their borrowing limit.",
+        "At least one copy of the book is available."
+      ],
+      "mainFlow": [
+        "The member presents the book at the lending desk.",
+        "The librarian scans the book's ISBN.",
+        "The system verifies the member's borrowing eligibility.",
+        "The system creates a loan with a due date.",
+        "The system decrements the available copy count.",
+        "The system issues a loan receipt to the member."
+      ],
+      "alternateFlows": [
+        "If the member has outstanding fines above the threshold, the system refuses the loan.",
+        "If no copy is available, the system offers to place a reservation instead."
+      ],
+      "postconditions": [
+        "A loan record exists linking the member and the book.",
+        "The book's available copy count is reduced by one."
+      ]
+    },
+    {
+      "id": "uc-return-book",
+      "name": "Return Book",
+      "actors": ["member", "librarian"],
+      "preconditions": ["An open loan exists for the book and member."],
+      "mainFlow": [
+        "The member returns the book to the lending desk.",
+        "The librarian scans the book's ISBN.",
+        "The system closes the loan and records the return date.",
+        "The system increments the available copy count."
+      ],
+      "alternateFlows": [
+        "If the loan is past its due date, the system raises an overdue fine.",
+        "If a reservation exists for the book, the system notifies the next member in the queue."
+      ],
+      "postconditions": ["The loan is closed.", "The book is available or allocated to a reservation."]
+    },
+    {
+      "id": "uc-reserve-book",
+      "name": "Reserve Book",
+      "actors": ["member"],
+      "preconditions": ["The member is active.", "All copies of the book are currently on loan."],
+      "mainFlow": [
+        "The member searches the catalogue for the book.",
+        "The member requests a reservation.",
+        "The system records the reservation with an expiry date.",
+        "The system confirms the reservation to the member."
+      ],
+      "alternateFlows": ["If the member already has an active reservation for the book, the system rejects the request."],
+      "postconditions": ["A reservation record exists for the member and book."]
+    },
+    {
+      "id": "uc-pay-fine",
+      "name": "Pay Fine",
+      "actors": ["member", "librarian"],
+      "preconditions": ["The member has at least one unpaid fine."],
+      "mainFlow": [
+        "The member requests a statement of outstanding fines.",
+        "The system lists every unpaid fine and the total owed.",
+        "The member pays the amount at the desk.",
+        "The librarian records the payment.",
+        "The system marks the fines as paid."
+      ],
+      "alternateFlows": ["If the member pays part of the amount, the system settles the oldest fines first."],
+      "postconditions": ["The paid fines carry a payment date."]
+    },
+    {
+      "id": "uc-manage-catalogue",
+      "name": "Manage Catalogue",
+      "actors": ["librarian", "administrator"],
+      "preconditions": ["The user is authenticated as staff."],
+      "mainFlow": [
+        "The user opens the catalogue management screen.",
+        "The user adds, edits or withdraws a book record.",
+        "The system validates the ISBN and category.",
+        "The system saves the change and records who made it."
+      ],
+      "alternateFlows": ["If the ISBN already exists, the system offers to adjust the copy count instead."],
+      "postconditions": ["The catalogue reflects the change."]
+    },
+    {
+      "id": "uc-manage-members",
+      "name": "Manage Members",
+      "actors": ["administrator"],
+      "preconditions": ["The user is authenticated as an administrator."],
+      "mainFlow": [
+        "The administrator opens the member management screen.",
+        "The administrator registers, suspends or reactivates a member.",
+        "The system saves the change."
+      ],
+      "alternateFlows": ["If the member has open loans, the system warns before suspension."],
+      "postconditions": ["The member's account status is updated."]
+    }
+  ],
+  "flows": [
+    {
+      "id": "flow-borrow-book",
+      "name": "Borrow a book at the lending desk",
+      "participants": ["member", "librarian", "book", "loan"],
+      "steps": [
+        { "from": "member", "to": "librarian", "message": "requestBook(isbn)", "order": 1 },
+        { "from": "librarian", "to": "book", "message": "checkAvailability(isbn)", "order": 2 },
+        { "from": "book", "to": "librarian", "message": "availableCopies()", "order": 3 },
+        { "from": "librarian", "to": "loan", "message": "createLoan(memberId, isbn)", "order": 4 },
+        { "from": "loan", "to": "member", "message": "loanIssued(dueOn)", "order": 5 }
+      ]
+    },
+    {
+      "id": "flow-return-book",
+      "name": "Return a book and assess any fine",
+      "participants": ["member", "librarian", "loan", "fine"],
+      "steps": [
+        { "from": "member", "to": "librarian", "message": "returnBook(isbn)", "order": 1 },
+        { "from": "librarian", "to": "loan", "message": "closeLoan(loanId)", "order": 2 },
+        { "from": "loan", "to": "fine", "message": "assessOverdue(loanId)", "order": 3 },
+        { "from": "fine", "to": "member", "message": "fineRaised(amount)", "order": 4 }
+      ]
+    },
+    {
+      "id": "flow-reserve-book",
+      "name": "Place a reservation on an unavailable book",
+      "participants": ["member", "book", "reservation"],
+      "steps": [
+        { "from": "member", "to": "book", "message": "checkAvailability(isbn)", "order": 1 },
+        { "from": "book", "to": "member", "message": "noCopiesAvailable()", "order": 2 },
+        { "from": "member", "to": "reservation", "message": "place(memberId, isbn)", "order": 3 },
+        { "from": "reservation", "to": "member", "message": "reservationConfirmed(expiresOn)", "order": 4 }
+      ]
+    }
+  ],
+  "states": [
+    {
+      "id": "state-book-available",
+      "entityRef": "book",
+      "name": "Available",
+      "isInitial": true,
+      "isFinal": false,
+      "transitions": [
+        { "to": "state-book-on-loan", "trigger": "borrow", "guard": "copiesAvailable > 0" },
+        { "to": "state-book-reserved", "trigger": "reserve", "guard": null }
+      ]
+    },
+    {
+      "id": "state-book-on-loan",
+      "entityRef": "book",
+      "name": "On Loan",
+      "isInitial": false,
+      "isFinal": false,
+      "transitions": [
+        { "to": "state-book-available", "trigger": "return", "guard": "no active reservation" },
+        { "to": "state-book-reserved", "trigger": "return", "guard": "reservation queued" },
+        { "to": "state-book-lost", "trigger": "reportLost", "guard": null }
+      ]
+    },
+    {
+      "id": "state-book-reserved",
+      "entityRef": "book",
+      "name": "Reserved",
+      "isInitial": false,
+      "isFinal": false,
+      "transitions": [
+        { "to": "state-book-on-loan", "trigger": "collect", "guard": "collected before expiry" },
+        { "to": "state-book-available", "trigger": "reservationExpired", "guard": null }
+      ]
+    },
+    {
+      "id": "state-book-lost",
+      "entityRef": "book",
+      "name": "Lost",
+      "isInitial": false,
+      "isFinal": true,
+      "transitions": []
+    },
+    {
+      "id": "state-loan-active",
+      "entityRef": "loan",
+      "name": "Active",
+      "isInitial": true,
+      "isFinal": false,
+      "transitions": [
+        { "to": "state-loan-overdue", "trigger": "dueDatePassed", "guard": null },
+        { "to": "state-loan-closed", "trigger": "returned", "guard": null }
+      ]
+    },
+    {
+      "id": "state-loan-overdue",
+      "entityRef": "loan",
+      "name": "Overdue",
+      "isInitial": false,
+      "isFinal": false,
+      "transitions": [{ "to": "state-loan-closed", "trigger": "returned", "guard": "fine settled" }]
+    },
+    {
+      "id": "state-loan-closed",
+      "entityRef": "loan",
+      "name": "Closed",
+      "isInitial": false,
+      "isFinal": true,
+      "transitions": []
+    }
+  ],
+  "components": [
+    {
+      "id": "comp-web-client",
+      "name": "Web Client",
+      "type": "ui",
+      "provides": ["BrowserUI"],
+      "requires": ["CatalogueAPI", "LendingAPI"]
+    },
+    {
+      "id": "comp-api-gateway",
+      "name": "API Gateway",
+      "type": "service",
+      "provides": ["CatalogueAPI", "LendingAPI"],
+      "requires": ["CatalogueService", "LendingService"]
+    },
+    {
+      "id": "comp-catalogue-service",
+      "name": "Catalogue Service",
+      "type": "service",
+      "provides": ["CatalogueService"],
+      "requires": ["LibraryDatabase"]
+    },
+    {
+      "id": "comp-lending-service",
+      "name": "Lending Service",
+      "type": "service",
+      "provides": ["LendingService"],
+      "requires": ["LibraryDatabase", "NotificationService"]
+    },
+    {
+      "id": "comp-notification-service",
+      "name": "Notification Service",
+      "type": "service",
+      "provides": ["NotificationService"],
+      "requires": []
+    },
+    {
+      "id": "comp-library-database",
+      "name": "Library Database",
+      "type": "database",
+      "provides": ["LibraryDatabase"],
+      "requires": []
+    }
+  ],
+  "nodes": [
+    {
+      "id": "node-member-browser",
+      "name": "Member Browser",
+      "type": "device",
+      "deployedComponents": ["comp-web-client"]
+    },
+    {
+      "id": "node-application-server",
+      "name": "Application Server",
+      "type": "server",
+      "deployedComponents": ["comp-api-gateway", "comp-catalogue-service", "comp-lending-service"]
+    },
+    {
+      "id": "node-worker-server",
+      "name": "Notification Worker",
+      "type": "server",
+      "deployedComponents": ["comp-notification-service"]
+    },
+    {
+      "id": "node-database-server",
+      "name": "Database Server",
+      "type": "server",
+      "deployedComponents": ["comp-library-database"]
+    }
+  ],
+  "requirements": [
+    {
+      "id": "req-issue-loan",
+      "type": "functional",
+      "text": "The system shall allow a librarian to issue a loan for an available book to an active member.",
+      "priority": "P0"
+    },
+    {
+      "id": "req-search-catalogue",
+      "type": "functional",
+      "text": "The system shall allow a member to search the catalogue by title, author, ISBN or category.",
+      "priority": "P0"
+    },
+    {
+      "id": "req-return-loan",
+      "type": "functional",
+      "text": "The system shall record the return of a borrowed book and reinstate the available copy count.",
+      "priority": "P0"
+    },
+    {
+      "id": "req-place-reservation",
+      "type": "functional",
+      "text": "The system shall allow a member to reserve a book whose copies are all on loan.",
+      "priority": "P1"
+    },
+    {
+      "id": "req-assess-fine",
+      "type": "functional",
+      "text": "The system shall raise a fine when a loan is returned after its due date.",
+      "priority": "P1"
+    },
+    {
+      "id": "req-availability",
+      "type": "nonFunctional",
+      "text": "The system shall be available during library opening hours with no more than 1% unplanned downtime.",
+      "priority": "P0"
+    },
+    {
+      "id": "req-search-latency",
+      "type": "nonFunctional",
+      "text": "A catalogue search shall return results within 2 seconds for a catalogue of 100,000 titles.",
+      "priority": "P1"
+    },
+    {
+      "id": "req-audit-trail",
+      "type": "nonFunctional",
+      "text": "Every change to a loan or member record shall be attributable to the staff account that made it.",
+      "priority": "P1"
+    }
+  ]
+}

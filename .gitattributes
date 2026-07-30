@@ -1,0 +1,18 @@
+# Normalise line endings to LF in the repo and in the working tree.
+#
+# Not cosmetic: this repo is built and run in Linux containers. A CRLF Makefile
+# breaks make, a CRLF shell script fails with "bad interpreter", and the
+# generated-file drift checks would report spurious diffs when a container
+# writes LF into a file git checked out as CRLF.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.docx binary
+*.xlsx binary
+*.woff binary
+*.woff2 binary

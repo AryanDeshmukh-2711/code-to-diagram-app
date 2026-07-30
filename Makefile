@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 COMPOSE := docker compose
 
-.PHONY: help dev down logs test lint fmt health clean
+.PHONY: help dev down logs test lint fmt types types-check health clean
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -15,14 +15,26 @@ down: ## Stop the stack and remove volumes
 logs: ## Tail logs for all services
 	$(COMPOSE) logs -f
 
-test: ## Run api + web test suites
-	$(COMPOSE) run --rm --no-deps api pytest -q
+# Two invocations, not one: pytest picks rootdir from the common ancestor of
+# its arguments, so a combined run lands on /srv and reads neither package's
+# config — including asyncio_mode.
+test: ## Run api, shared and web test suites
+	$(COMPOSE) run --rm --no-deps api pytest -q tests
+	$(COMPOSE) run --rm --no-deps api pytest -q ../shared/tests
 	$(COMPOSE) run --rm --no-deps web npm run test -- --run
+
+types: ## Regenerate the CPM JSON Schema and the TypeScript types from it
+	$(COMPOSE) run --rm --no-deps api python -m cpm.export_schema ../schemas/cpm.schema.json
+	$(COMPOSE) run --rm --no-deps web npm run gen:types
+
+types-check: ## Fail if the schema or the generated TS is stale
+	$(COMPOSE) run --rm --no-deps api python -m cpm.export_schema ../schemas/cpm.schema.json --check
+	$(COMPOSE) run --rm --no-deps web npm run gen:types:check
 
 # Paths are relative to the container WORKDIR (/srv/api) on purpose: Git Bash on
 # Windows rewrites a leading /srv/... into C:/Program Files/Git/srv/... before
 # docker ever sees it.
-lint: ## Lint api, worker and web
+lint: types-check ## Lint api, worker and web, and verify generated files are current
 	$(COMPOSE) run --rm --no-deps api ruff check . ../shared
 	$(COMPOSE) run --rm --no-deps api ruff format --check . ../shared
 	$(COMPOSE) run --rm --no-deps worker ruff check .
