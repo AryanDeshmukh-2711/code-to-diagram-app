@@ -169,10 +169,15 @@ class Requirement(CPMBase):
     priority: Name
 
 
-class CPMDraft(CPMBase):
-    """A structurally valid CPM whose references may still dangle."""
+class CPMCollections(CPMBase):
+    """Everything the model contains, without the project metadata.
 
-    meta: Meta
+    Split out so extraction can ask an LLM for exactly this and no more. Meta
+    carries a project name and a creation timestamp, neither of which the model
+    should be inventing — and a schema that asks for a timestamp is inviting
+    precisely the fabrication the extraction floor exists to prevent.
+    """
+
     actors: list[Actor] = Field(default_factory=list)
     entities: list[Entity] = Field(default_factory=list)
     relationships: list[Relationship] = Field(default_factory=list)
@@ -182,6 +187,12 @@ class CPMDraft(CPMBase):
     components: list[Component] = Field(default_factory=list)
     nodes: list[Node] = Field(default_factory=list)
     requirements: list[Requirement] = Field(default_factory=list)
+
+
+class CPMDraft(CPMCollections):
+    """A structurally valid CPM whose references may still dangle."""
+
+    meta: Meta
 
 
 class CPM(CPMDraft):

@@ -1,7 +1,7 @@
 [project]
 name = "asa-shared"
 version = "0.1.0"
-description = "Code shared by the api and worker: the Canonical Project Model, and the LLM Gateway."
+description = "Code shared by the api and worker: the CPM, the LLM Gateway, and extraction."
 requires-python = ">=3.12"
 dependencies = ["pydantic>=2.9", "httpx>=0.28"]
 
@@ -10,7 +10,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["cpm*", "llm*"]
+include = ["cpm*", "llm*", "extraction*"]
 
 [tool.setuptools.package-data]
 cpm = ["fixtures/*.json"]
