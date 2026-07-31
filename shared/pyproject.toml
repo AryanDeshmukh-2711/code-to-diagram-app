@@ -31,11 +31,12 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["cpm*", "llm*", "extraction*", "diagrams*", "consistency*", "generation*", "review*", "store*", "srs*", "srs.export*", "srs.template*", "billing*"]
+include = ["cpm*", "llm*", "extraction*", "diagrams*", "consistency*", "generation*", "review*", "store*", "srs*", "srs.export*", "srs.template*", "billing*", "analytics*"]
 
 [tool.setuptools.package-data]
 cpm = ["fixtures/*.json"]
 billing = ["*.json", "*.sql"]
+analytics = ["*.sql"]
 "srs.template" = ["builtin/*.json"]
 
 [tool.pytest.ini_options]

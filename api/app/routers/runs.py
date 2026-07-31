@@ -11,6 +11,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+from analytics import events
 from arq import create_pool
 from arq.connections import RedisSettings
 from billing.quota import QuotaExceeded, check_new_run, check_template
@@ -201,6 +202,20 @@ async def start_run(body: StartRunIn) -> RunOut:
             created_at=datetime.now(UTC),
         )
         session.add(run)
+        await events.record(
+            session,
+            events.RUN_STARTED,
+            account_id=body.accountId,
+            project_id=body.projectId,
+            run_id=run.id,
+            tier=tier.id,
+            payload={
+                "diagramTypes": sorted(wanted),
+                "format": fmt.value,
+                "templateId": body.templateId,
+                "kind": "full",
+            },
+        )
         await session.commit()
         snapshot = await _snapshot(session, run)
 
@@ -270,6 +285,24 @@ async def regenerate(run_id: str, body: RegenerateIn, response: Response) -> Reg
         await pool.enqueue_job("regenerate_diagram", child_id, _job_id=f"regen:{child_id}")
     finally:
         await pool.aclose()
+
+    async with SessionFactory() as session:
+        parent = await session.get(GenerationRunRow, run_id)
+        await events.record(
+            session,
+            "regeneration_requested",
+            account_id=parent.account_id if parent else None,
+            project_id=plan.project_id,
+            run_id=child_id,
+            tier=parent.tier if parent else None,
+            payload={
+                "parentRunId": run_id,
+                "diagramType": plan.diagram_type,
+                "reason": plan.reason,
+                "staleTypes": plan.stale_types,
+            },
+        )
+        await session.commit()
 
     out.runId = child_id
     response.status_code = status.HTTP_202_ACCEPTED

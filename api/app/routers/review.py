@@ -11,6 +11,8 @@ costs nothing the user notices.
 import uuid
 from typing import Any, Literal
 
+from analytics import events
+from analytics.review_signals import ReviewSignals
 from billing.quota import QuotaExceeded, check_new_project
 from cpm.fixtures import library_management_system_payload
 from cpm.schema import CPMDraft
@@ -176,6 +178,13 @@ async def seed(project_id: str, body: SeedIn) -> ReviewOut:
                 session.add(
                     ProjectRow(id=project_id, account_id=body.accountId, name=body.projectName)
                 )
+                await events.record(
+                    session,
+                    events.PROJECT_CREATED,
+                    account_id=body.accountId,
+                    project_id=project_id,
+                    payload={"projectName": body.projectName},
+                )
             row = CPMDraftRow(project_id=project_id)
             session.add(row)
         row.project_name = body.projectName
@@ -257,8 +266,41 @@ def _apply(draft: CPMDraft, body: EditIn):
     return set_use_case_actors(draft, body.id or "", body.actorIds)
 
 
+class ConfirmIn(BaseModel):
+    """What the review screen observed while the user was on it.
+
+    Sent with the confirmation rather than trickled as separate events: the
+    question is what happened *before this decision*, and one payload attached
+    to the decision cannot be half-delivered by a closing tab.
+    """
+
+    accountId: str = "anonymous"
+    editsTotal: int = 0
+    editsByOp: dict[str, int] = Field(default_factory=dict)
+    editsReverted: int = 0
+    secondsOnScreen: float = 0.0
+    activeSeconds: float = 0.0
+    itemsViewed: int = 0
+    sectionsViewed: list[str] = Field(default_factory=list)
+    inspections: int = 0
+    issuesAtOpen: int = 0
+
+
+def _reviewable_items(draft) -> int:
+    """How many things there were to look at.
+
+    The denominator for coverage, and the scale for how long a real review
+    would take. Counting only the collections the screen actually shows —
+    inventing a bigger denominator would make every user look inattentive.
+    """
+    return sum(
+        len(getattr(draft, name, []) or [])
+        for name in ("entities", "actors", "relationships", "use_cases")
+    )
+
+
 @router.post("/confirm", response_model=ConfirmOut)
-async def confirm(project_id: str) -> ConfirmOut:
+async def confirm(project_id: str, body: ConfirmIn | None = None) -> ConfirmOut:
     """The gate (FR-6). Writes an immutable version (FR-7)."""
     async with SessionFactory() as session:
         row = await _load(session, project_id)
@@ -282,6 +324,29 @@ async def confirm(project_id: str) -> ConfirmOut:
             payload=cpm.model_dump(by_alias=True, mode="json"),
         )
         session.add(stored)
+
+        # The most important event in the product. Raw signals and verdict
+        # together, so the thresholds can be re-argued against history later.
+        signals = ReviewSignals(
+            edits_total=(body.editsTotal if body else 0),
+            edits_by_op=(body.editsByOp if body else {}),
+            edits_reverted=(body.editsReverted if body else 0),
+            seconds_on_screen=(body.secondsOnScreen if body else 0.0),
+            active_seconds=(body.activeSeconds if body else 0.0),
+            items_total=_reviewable_items(draft),
+            items_viewed=(body.itemsViewed if body else 0),
+            sections_viewed=tuple(body.sectionsViewed) if body else (),
+            inspections=(body.inspections if body else 0),
+            issues_at_open=(body.issuesAtOpen if body else 0),
+            issues_at_confirm=0,
+        )
+        await events.record(
+            session,
+            events.CPM_CONFIRMED,
+            account_id=(body.accountId if body else None),
+            project_id=project_id,
+            payload={**signals.as_payload(), "cpmVersionId": stored.id, "version": version},
+        )
         await session.commit()
 
         return ConfirmOut(
