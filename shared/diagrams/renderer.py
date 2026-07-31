@@ -10,7 +10,7 @@ Mermaid renderer was down.
 
 import asyncio
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 
 from cpm.schema import CPM
 from diagrams.engines.base import DiagramEngine, EngineError
@@ -124,12 +124,26 @@ class DiagramRenderer:
         cpm: CPM,
         diagram_types: Sequence[str] | None = None,
         fmt: RenderFormat = RenderFormat.SVG,
+        on_result: Callable[[DiagramResult], Awaitable[None]] | None = None,
     ) -> list[DiagramResult]:
-        """Render several diagrams concurrently. Never raises for one failing."""
+        """Render several diagrams concurrently. Never raises for one failing.
+
+        `on_result` fires as each diagram finishes rather than at the end, so a
+        caller can persist progress while the rest are still running. It is a
+        reporting hook only: raising from it must not take the run down.
+        """
         wanted = list(diagram_types) if diagram_types is not None else self._known_types()
-        results = await asyncio.gather(
-            *(self.render(cpm, diagram_type, fmt) for diagram_type in wanted)
-        )
+
+        async def render_one(diagram_type: str) -> DiagramResult:
+            result = await self.render(cpm, diagram_type, fmt)
+            if on_result is not None:
+                try:
+                    await on_result(result)
+                except Exception:
+                    logger.exception("progress callback failed for %s", diagram_type)
+            return result
+
+        results = await asyncio.gather(*(render_one(diagram_type) for diagram_type in wanted))
         return list(results)
 
     # -- internals ---------------------------------------------------------
@@ -144,3 +158,18 @@ class DiagramRenderer:
 
     def _known_types(self) -> list[str]:
         return sorted(self._mappers) if self._mappers is not None else registered_types()
+
+
+def build_default_renderer() -> "DiagramRenderer":
+    """A renderer wired from the environment, for the worker."""
+    import os
+
+    from diagrams.engines.mermaid import MermaidEngine
+    from diagrams.engines.plantuml import PlantUMLEngine
+
+    return DiagramRenderer(
+        engines={
+            "plantuml": PlantUMLEngine(os.getenv("PLANTUML_SERVER_URL", "http://plantuml:8080")),
+            "mermaid": MermaidEngine(os.getenv("MERMAID_RENDERER_URL", "http://kroki:8000")),
+        }
+    )

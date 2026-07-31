@@ -14,6 +14,7 @@ itself is worse than a set that is visibly short one diagram.
 """
 
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from consistency.validator import (
@@ -59,13 +60,14 @@ async def execute_generation_run(
     renderer: DiagramRenderer,
     diagram_types: list[str] | None = None,
     fmt: RenderFormat = RenderFormat.SVG,
+    on_result: Callable[[DiagramResult], Awaitable[None]] | None = None,
 ) -> GenerationRunResult:
     """Render the diagram set and validate it. Raises on a consistency violation.
 
-    Note the parameters: there is nothing here that makes validation optional,
-    and nothing should ever be added.
+    Note the parameters: `on_result` reports progress, and there is nothing
+    here that makes validation optional. Nothing should ever be added that does.
     """
-    diagrams = await renderer.render_all(cpm, diagram_types, fmt)
+    diagrams = await renderer.render_all(cpm, diagram_types, fmt, on_result=on_result)
 
     report = validate_consistency(cpm, diagrams)
 
