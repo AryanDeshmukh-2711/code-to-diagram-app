@@ -11,6 +11,7 @@ costs nothing the user notices.
 import uuid
 from typing import Any, Literal
 
+from billing.quota import QuotaExceeded, check_new_project
 from cpm.fixtures import library_management_system_payload
 from cpm.schema import CPMDraft
 from fastapi import APIRouter, HTTPException, status
@@ -36,8 +37,10 @@ from review import (
 )
 from review.state import NotConfirmable
 from sqlalchemy import func, select
-from store.models import CPMDraftRow, CPMVersionRow
+from store.models import AccountRow, CPMDraftRow, CPMVersionRow, ProjectRow
 from store.session import SessionFactory
+
+from app.core.quota import as_http
 
 router = APIRouter(prefix="/projects/{project_id}/review", tags=["review"])
 
@@ -64,6 +67,10 @@ class ReviewOut(BaseModel):
 class SeedIn(BaseModel):
     projectName: str = "Library Management System"
     draft: dict[str, Any] | None = None
+    accountId: str = "anonymous"
+    """Whose quota this counts against. A real deployment takes it from the
+    session; taking it from the body here keeps the enforcement testable
+    without inventing an auth system this milestone does not have."""
 
 
 class EditIn(BaseModel):
@@ -155,6 +162,20 @@ async def seed(project_id: str, body: SeedIn) -> ReviewOut:
     async with SessionFactory() as session:
         row = await session.get(CPMDraftRow, project_id)
         if row is None:
+            # A new project is the thing the free tier counts (FR-22). Checked
+            # here, in the request, against the database — the button in the
+            # browser is a courtesy, not the lock.
+            project = await session.get(ProjectRow, project_id)
+            if project is None:
+                try:
+                    await check_new_project(session, body.accountId)
+                except QuotaExceeded as exc:
+                    raise as_http(exc) from None
+                if await session.get(AccountRow, body.accountId) is None:
+                    session.add(AccountRow(id=body.accountId))
+                session.add(
+                    ProjectRow(id=project_id, account_id=body.accountId, name=body.projectName)
+                )
             row = CPMDraftRow(project_id=project_id)
             session.add(row)
         row.project_name = body.projectName

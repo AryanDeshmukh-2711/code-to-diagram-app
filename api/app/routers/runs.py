@@ -13,6 +13,7 @@ from typing import Any
 
 from arq import create_pool
 from arq.connections import RedisSettings
+from billing.quota import QuotaExceeded, check_new_run, check_template
 from diagrams.registry import registered_types
 from diagrams.types import RenderFormat
 from fastapi import APIRouter, HTTPException, Response, status
@@ -35,6 +36,7 @@ from store.models import (
 from store.session import SessionFactory
 
 from app.core.config import get_settings
+from app.core.quota import as_http
 
 router = APIRouter(prefix="/runs", tags=["generation"])
 
@@ -49,6 +51,7 @@ class StartRunIn(BaseModel):
     diagramTypes: list[str] = Field(default_factory=list)
     templateId: str | None = None
     format: str = "svg"
+    accountId: str = "anonymous"
 
 
 class ArtefactOut(BaseModel):
@@ -72,6 +75,7 @@ class RunOut(BaseModel):
     projectId: str
     cpmVersionId: str
     status: str
+    tier: str | None = None
     kind: str = "full"
     parentRunId: str | None = None
     requestedTypes: list[str]
@@ -121,6 +125,7 @@ async def _snapshot(session, run: GenerationRunRow) -> RunOut:
         projectId=run.project_id,
         cpmVersionId=run.cpm_version_id,
         status=run.status,
+        tier=run.tier,
         kind=run.kind,
         parentRunId=run.parent_run_id,
         requestedTypes=list(run.requested_types),
@@ -164,6 +169,16 @@ async def start_run(body: StartRunIn) -> RunOut:
         ) from None
 
     async with SessionFactory() as session:
+        # Entitlements first, before a job is queued or a row is written. A
+        # tier that cannot render SVG must be refused here rather than have the
+        # worker produce artefacts nobody is allowed to download.
+        try:
+            tier = await check_new_run(session, body.accountId, fmt.value)
+            if body.templateId:
+                await check_template(session, body.accountId, body.templateId)
+        except QuotaExceeded as exc:
+            raise as_http(exc) from None
+
         version = await session.get(CPMVersionRow, body.cpmVersionId)
         if version is None:
             # FR-6: generation runs from a confirmed version, and there is no
@@ -178,6 +193,8 @@ async def start_run(body: StartRunIn) -> RunOut:
             project_id=body.projectId,
             cpm_version_id=body.cpmVersionId,
             template_id=body.templateId,
+            account_id=body.accountId,
+            tier=tier.id,
             requested_types=sorted(wanted),
             fmt=fmt.value,
             status=RunStatus.PENDING,
@@ -189,7 +206,14 @@ async def start_run(body: StartRunIn) -> RunOut:
 
     pool = await create_pool(RedisSettings.from_dsn(get_settings().redis_url))
     try:
-        await pool.enqueue_job("render_run", run.id, _job_id=f"render:{run.id}")
+        # Priority tiers land on their own queue, which a second worker pool
+        # consumes. One queue with a "priority" flag would still be FIFO.
+        await pool.enqueue_job(
+            "render_run",
+            run.id,
+            _job_id=f"render:{run.id}",
+            _queue_name=f"arq:{tier.queue}",
+        )
     finally:
         await pool.aclose()
 

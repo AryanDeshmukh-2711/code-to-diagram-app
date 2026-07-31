@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 COMPOSE := docker compose
 
-.PHONY: help dev down logs test at1 lint fmt golden types types-check health clean
+.PHONY: help dev down logs test at1 margin lint fmt golden types types-check health clean
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -30,6 +30,9 @@ at1: ## Run acceptance test AT-1 end to end (SRS 10.1)
 	@# Relative path on purpose: an absolute one gets mangled into a Windows
 	@# path by MSYS before docker ever sees it.
 	$(COMPOSE) exec -T api python ../repo/acceptance/at1.py
+
+margin: ## Margin per tier against inference cost (NFR-M4)
+	$(COMPOSE) exec -T api python -m billing.margin
 
 golden: ## Regenerate the golden diagram sources, then review the diff
 	$(COMPOSE) run --rm --no-deps api python ../shared/tests/regenerate_golden.py

@@ -44,6 +44,13 @@ RECORDING = FIXTURES / "recorded_model_output.json"
 PROJECT_NAME = "Library Management System"
 AUTHOR = "A. V. Deshmukh"
 
+ACCOUNT_TIER = "pro"
+"""AT-1 exercises the whole product, so it runs on a plan entitled to all of
+it. On the free tier the SVG run is refused with a 402 — correctly, and that
+refusal is covered by the quota tests rather than here. An acceptance test that
+quietly ran on whatever plan happened to be the default would start failing for
+billing reasons and read as a rendering bug."""
+
 V1_DIAGRAMS = (
     "class",
     "use_case",
@@ -222,12 +229,23 @@ async def _model_reachable() -> bool:
         return False
 
 
+async def _entitled_account(account_id: str) -> None:
+    """Put the run on a plan that includes what AT-1 tests."""
+    from store.models import AccountRow
+    from store.session import SessionFactory
+
+    async with SessionFactory() as session:
+        if await session.get(AccountRow, account_id) is None:
+            session.add(AccountRow(id=account_id, tier=ACCOUNT_TIER))
+            await session.commit()
+
+
 async def _confirm_over_http(client: httpx.AsyncClient, project_id: str, cpm) -> str:
     """Through the review gate (FR-6), over HTTP, exactly as a user would."""
     payload = cpm.model_dump(by_alias=True, mode="json")
     seeded = await client.post(
         f"{BASE}/projects/{project_id}/review/seed",
-        json={"projectName": PROJECT_NAME, "draft": payload},
+        json={"projectName": PROJECT_NAME, "draft": payload, "accountId": project_id},
     )
     seeded.raise_for_status()
     confirmed = await client.post(f"{BASE}/projects/{project_id}/review/confirm")
@@ -243,6 +261,7 @@ async def _run(client: httpx.AsyncClient, project_id: str, version_id: str, type
             "cpmVersionId": version_id,
             "diagramTypes": list(types),
             "format": fmt,
+            "accountId": project_id,
         },
     )
     created.raise_for_status()
@@ -322,6 +341,8 @@ async def run_at1() -> Report:
     missing = [t for t in V1_DIAGRAMS if t not in set(registered_types())]
 
     project_id = f"at1_{int(time.time())}"
+    await _entitled_account(project_id)
+    report.notes.append(f"account     {project_id} on the {ACCOUNT_TIER} plan (FR-22)")
     async with httpx.AsyncClient(timeout=BUDGET_SECONDS) as client:
         version_id = await _confirm_over_http(client, project_id, cpm)
         svg_run = await _run(client, project_id, version_id, available, "svg")

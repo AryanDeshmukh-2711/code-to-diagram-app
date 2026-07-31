@@ -63,6 +63,38 @@ class ArtefactStatus(StrEnum):
     user something is broken when nothing is."""
 
 
+class AccountRow(Base):
+    """Who owns the work, and what they are entitled to (FR-22).
+
+    The tier is stored rather than derived so that a plan change is an event
+    with a date, and so a run can record the tier it was generated under —
+    which is what makes the margin query answerable after somebody upgrades.
+    """
+
+    __tablename__ = "accounts"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    tier: Mapped[str] = mapped_column(String(32), nullable=False, default="free")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, nullable=False
+    )
+    tier_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ProjectRow(Base):
+    """One project. Counted against the account's project quota."""
+
+    __tablename__ = "projects"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    account_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, nullable=False
+    )
+
+
 class CPMDraftRow(Base):
     """The model the user is currently editing. One per project."""
 
@@ -100,6 +132,12 @@ class GenerationRunRow(Base):
     project_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     cpm_version_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     template_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    account_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    tier: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    """The tier in force when this run happened, not the account's tier today.
+    NFR-M4 asks what a plan costs to serve; an upgrade six weeks later must not
+    silently rewrite the history of what the cheap plan cost."""
 
     kind: Mapped[str] = mapped_column(String(16), nullable=False, default=RunKind.FULL)
     parent_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)

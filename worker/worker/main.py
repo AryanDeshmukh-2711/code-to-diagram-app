@@ -28,6 +28,11 @@ async def shutdown(ctx: dict[str, Any]) -> None:
 
 
 class WorkerSettings:
+    queue_name = os.getenv("ARQ_QUEUE", "arq:default")
+    """Which queue this pool consumes. Run a second worker with
+    ARQ_QUEUE=arq:priority to serve the priority tier: one queue with a
+    priority column would still be first in, first out."""
+
     functions = [extract_cpm, render_run, regenerate_diagram, assemble_document]
     redis_settings = get_redis_settings()
     on_startup = startup
