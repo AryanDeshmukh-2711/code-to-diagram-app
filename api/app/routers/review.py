@@ -36,9 +36,8 @@ from review import (
 )
 from review.state import NotConfirmable
 from sqlalchemy import func, select
-
-from app.core.db import SessionFactory
-from app.models.review import CPMDraftRow, CPMVersionRow
+from store.models import CPMDraftRow, CPMVersionRow
+from store.session import SessionFactory
 
 router = APIRouter(prefix="/projects/{project_id}/review", tags=["review"])
 

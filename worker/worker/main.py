@@ -12,7 +12,7 @@ from typing import Any
 
 from worker.handlers.assemble import assemble_document
 from worker.handlers.extract import extract_cpm
-from worker.handlers.render import render_diagram
+from worker.handlers.render import render_run
 from worker.settings import redis_settings as get_redis_settings
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -28,7 +28,7 @@ async def shutdown(ctx: dict[str, Any]) -> None:
 
 
 class WorkerSettings:
-    functions = [extract_cpm, render_diagram, assemble_document]
+    functions = [extract_cpm, render_run, assemble_document]
     redis_settings = get_redis_settings()
     on_startup = startup
     on_shutdown = shutdown

@@ -1,0 +1,33 @@
+@startuml
+!theme plain
+skinparam shadowing false
+skinparam sequenceMessageAlign left
+autonumber
+
+actor "Member" as member
+actor "Librarian" as librarian
+participant "Book" as book
+participant "Loan" as loan
+participant "Fine" as fine
+participant "Reservation" as reservation
+
+== Borrow a book at the lending desk ==
+member -> librarian : requestBook(isbn)
+librarian -> book : checkAvailability(isbn)
+book -> librarian : availableCopies()
+librarian -> loan : createLoan(memberId, isbn)
+loan -> member : loanIssued(dueOn)
+
+== Return a book and assess any fine ==
+member -> librarian : returnBook(isbn)
+librarian -> loan : closeLoan(loanId)
+loan -> fine : assessOverdue(loanId)
+fine -> member : fineRaised(amount)
+
+== Place a reservation on an unavailable book ==
+member -> book : checkAvailability(isbn)
+book -> member : noCopiesAvailable()
+member -> reservation : place(memberId, isbn)
+reservation -> member : reservationConfirmed(expiresOn)
+
+@enduml

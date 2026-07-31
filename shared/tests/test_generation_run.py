@@ -78,9 +78,11 @@ def corrupting_mapper(diagram_type: str, before: str, after: str) -> DiagramMapp
 async def test_a_clean_run_succeeds_and_reports_what_it_checked(cpm) -> None:
     result = await execute_generation_run(cpm, DiagramRenderer(engines=engines()))
 
+    from diagrams.registry import registered_types
+
     assert result.consistency.ok
     assert result.consistency.recognised_names > 0
-    assert len(result.rendered) == 3
+    assert len(result.rendered) == len(registered_types())
     assert result.failed == []
 
 
@@ -114,10 +116,13 @@ async def test_a_render_failure_does_not_fail_the_run(cpm) -> None:
         engines={"plantuml": AlwaysRenders("plantuml"), "mermaid": AlwaysFails("mermaid")}
     )
     result = await execute_generation_run(cpm, renderer)
+    from diagrams.registry import registry
+
+    mermaid_types = [t for t, m in registry().items() if str(m.engine) == "mermaid"]
 
     assert result.consistency.ok
-    assert len(result.failed) == 1
-    assert len(result.rendered) == 2
+    assert len(result.failed) == len(mermaid_types)
+    assert len(result.rendered) == len(registry()) - len(mermaid_types)
 
 
 # --------------------------------------------------------------------------

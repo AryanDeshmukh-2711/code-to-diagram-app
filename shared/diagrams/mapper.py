@@ -18,6 +18,26 @@ from cpm.schema import CPM
 from diagrams.types import Engine
 
 
+class InsufficientModelData(Exception):
+    """The CPM does not describe what this diagram needs.
+
+    Raised, not worked around. A sequence diagram with no flows, or a
+    deployment diagram with no nodes, has nothing to draw — and the tempting
+    alternative is to invent a plausible node or two so the figure is not
+    empty. That is precisely the fabrication risk R1 is about, and here it
+    would be invisible: a diagram nobody can check against a description that
+    never mentioned it.
+
+    The renderer turns this into a `SkippedDiagram`, which the document
+    assembler can report honestly ("no interaction flows were described")
+    rather than silently omitting a numbered figure.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 @dataclass(frozen=True)
 class DiagramMapper:
     diagram_type: str

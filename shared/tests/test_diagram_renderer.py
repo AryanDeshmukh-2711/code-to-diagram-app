@@ -5,6 +5,8 @@ them failing must cost the user that one diagram, not the whole three-minute
 generation (FR-11, NFR-R2).
 """
 
+from collections import Counter
+
 import pytest
 
 from cpm.fixtures import load_library_management_system
@@ -60,17 +62,25 @@ async def test_a_successful_render_carries_its_source_and_bytes(cpm) -> None:
 
 
 async def test_each_diagram_reaches_the_engine_its_mapper_declared(cpm) -> None:
-    render, engines = renderer({"plantuml": [SVG, SVG], "mermaid": [SVG]})
+    # Counts come from the registry, not a literal: a new mapper must not make
+    # this test fail for the wrong reason.
+    from diagrams.registry import registry
+
+    expected = Counter(str(mapper.engine) for mapper in registry().values())
+
+    render, engines = renderer({"plantuml": [], "mermaid": []})
     await render.render_all(cpm)
 
-    assert len(engines["plantuml"].calls) == 2, "class and use case"
-    assert len(engines["mermaid"].calls) == 1, "entity relationship"
+    for engine_name, count in expected.items():
+        assert len(engines[engine_name].calls) == count, engine_name
 
 
 async def test_render_all_covers_every_registered_type(cpm) -> None:
-    render, _ = renderer({"plantuml": [SVG, SVG], "mermaid": [SVG]})
+    from diagrams.registry import registered_types
+
+    render, _ = renderer({"plantuml": [], "mermaid": []})
     results = await render.render_all(cpm)
-    assert {r.diagram_type for r in results} == {"class", "entity_relationship", "use_case"}
+    assert {r.diagram_type for r in results} == set(registered_types())
 
 
 # --------------------------------------------------------------------------
@@ -164,12 +174,14 @@ async def test_a_mapper_that_raises_fails_only_that_diagram(cpm) -> None:
 
 
 async def test_render_all_never_raises_even_when_everything_fails(cpm) -> None:
+    from diagrams.registry import registered_types
+
     render, _ = renderer(
-        {"plantuml": [EngineError("boom")] * 4, "mermaid": [EngineError("boom")] * 2}
+        {"plantuml": [EngineError("boom")] * 20, "mermaid": [EngineError("boom")] * 20}
     )
     results = await render.render_all(cpm)
 
-    assert len(results) == 3
+    assert len(results) == len(registered_types())
     assert all(isinstance(r, FailedDiagram) for r in results)
 
 
@@ -181,6 +193,66 @@ async def test_an_unexpected_exception_is_contained_too(cpm) -> None:
 
     assert isinstance(results["class"], FailedDiagram)
     assert results["entity_relationship"].ok
+
+
+# --------------------------------------------------------------------------
+# Missing model data is a skip, not a failure
+# --------------------------------------------------------------------------
+
+
+async def test_a_mapper_with_nothing_to_draw_yields_a_skip(cpm) -> None:
+    from diagrams.mapper import InsufficientModelData
+    from diagrams.types import SkippedDiagram
+
+    def nothing_to_draw(_cpm):
+        raise InsufficientModelData("No interaction flows were described.")
+
+    empty = DiagramMapper(
+        diagram_type="empty",
+        title="Empty Diagram",
+        engine=Engine.PLANTUML,
+        to_source=nothing_to_draw,
+    )
+    render = DiagramRenderer(
+        engines={"plantuml": FakeEngine("plantuml", [SVG])}, mappers={"empty": empty}
+    )
+    result = await render.render(cpm, "empty")
+
+    assert isinstance(result, SkippedDiagram)
+    assert "No interaction flows" in result.reason
+
+
+async def test_a_skip_is_not_reported_as_a_failure(cpm) -> None:
+    # "We could not draw this" and "you never described this" need different
+    # words in the document and different actions from the user.
+    from diagrams.mapper import InsufficientModelData
+    from diagrams.types import SkippedDiagram
+    from generation.run import GenerationRunResult
+
+    def nothing_to_draw(_cpm):
+        raise InsufficientModelData("nothing to draw")
+
+    skipped = SkippedDiagram(diagram_type="empty", title="Empty", reason="nothing to draw")
+    failed = FailedDiagram("x", "X", "plantuml", "src", "boom", 2)
+    result = GenerationRunResult(cpm=cpm, diagrams=[skipped, failed], consistency=None)  # type: ignore[arg-type]
+
+    assert result.skipped == [skipped]
+    assert result.failed == [failed], "a skip must not be counted as a failure"
+    assert nothing_to_draw is not None
+
+
+async def test_the_engine_is_never_called_for_a_skipped_diagram(cpm) -> None:
+    from diagrams.mapper import InsufficientModelData
+
+    def nothing_to_draw(_cpm):
+        raise InsufficientModelData("nothing to draw")
+
+    empty = DiagramMapper("empty", "Empty", Engine.PLANTUML, nothing_to_draw)
+    engine = FakeEngine("plantuml", [SVG])
+    render = DiagramRenderer(engines={"plantuml": engine}, mappers={"empty": empty})
+    await render.render(cpm, "empty")
+
+    assert engine.calls == []
 
 
 # --------------------------------------------------------------------------
