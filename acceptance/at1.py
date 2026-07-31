@@ -229,36 +229,48 @@ async def _model_reachable() -> bool:
         return False
 
 
-async def _entitled_account(account_id: str) -> None:
-    """Put the run on a plan that includes what AT-1 tests."""
-    from store.models import AccountRow
-    from store.session import SessionFactory
+async def _entitled_session(client: httpx.AsyncClient) -> tuple[str, dict[str, str]]:
+    """Register, sign in, and return the account id with its auth header.
 
-    async with SessionFactory() as session:
-        if await session.get(AccountRow, account_id) is None:
-            session.add(AccountRow(id=account_id, tier=ACCOUNT_TIER))
-            await session.commit()
+    Through the real endpoints: AT-1 exercises the product a user would meet,
+    and an account inserted straight into the database would skip the one thing
+    standing between a stranger and somebody's coursework.
+    """
+    registered = await client.post(f"{BASE}/auth/register", json={"tier": ACCOUNT_TIER})
+    registered.raise_for_status()
+    account = registered.json()
+
+    session = await client.post(
+        f"{BASE}/auth/token",
+        json={"accountId": account["accountId"], "apiKey": account["apiKey"]},
+    )
+    session.raise_for_status()
+    return account["accountId"], {"Authorization": f"Bearer {session.json()['token']}"}
 
 
-async def _confirm_over_http(client: httpx.AsyncClient, project_id: str, cpm) -> str:
+async def _confirm_over_http(
+    client: httpx.AsyncClient, project_id: str, cpm, auth: dict[str, str]
+) -> str:
     """Through the review gate (FR-6), over HTTP, exactly as a user would."""
     payload = cpm.model_dump(by_alias=True, mode="json")
     seeded = await client.post(
         f"{BASE}/projects/{project_id}/review/seed",
         json={"projectName": PROJECT_NAME, "draft": payload},
-        headers={"X-Account-Id": project_id},
+        headers=auth,
     )
     seeded.raise_for_status()
     confirmed = await client.post(
         f"{BASE}/projects/{project_id}/review/confirm",
         json={},
-        headers={"X-Account-Id": project_id},
+        headers=auth,
     )
     confirmed.raise_for_status()
     return confirmed.json()["versionId"]
 
 
-async def _run(client: httpx.AsyncClient, project_id: str, version_id: str, types, fmt: str):
+async def _run(
+    client: httpx.AsyncClient, project_id: str, version_id: str, types, fmt: str, auth: dict
+):
     created = await client.post(
         f"{BASE}/runs",
         json={
@@ -267,16 +279,14 @@ async def _run(client: httpx.AsyncClient, project_id: str, version_id: str, type
             "diagramTypes": list(types),
             "format": fmt,
         },
-        headers={"X-Account-Id": project_id},
+        headers=auth,
     )
     created.raise_for_status()
     run_id = created.json()["runId"]
     deadline = time.perf_counter() + BUDGET_SECONDS
     while time.perf_counter() < deadline:
         run = (
-            await client.get(
-                f"{BASE}/runs/{run_id}", headers={"X-Account-Id": project_id}
-            )
+            await client.get(f"{BASE}/runs/{run_id}", headers=auth)
         ).json()
         if run["status"] in ("succeeded", "failed"):
             return run
@@ -350,12 +360,14 @@ async def run_at1() -> Report:
     missing = [t for t in V1_DIAGRAMS if t not in set(registered_types())]
 
     project_id = f"at1_{int(time.time())}"
-    await _entitled_account(project_id)
-    report.notes.append(f"account     {project_id} on the {ACCOUNT_TIER} plan (FR-22)")
     async with httpx.AsyncClient(timeout=BUDGET_SECONDS) as client:
-        version_id = await _confirm_over_http(client, project_id, cpm)
-        svg_run = await _run(client, project_id, version_id, available, "svg")
-        png_run = await _run(client, project_id, version_id, available, "png")
+        account, auth = await _entitled_session(client)
+        report.notes.append(
+            f"account     {account} on the {ACCOUNT_TIER} plan, signed in (FR-22)"
+        )
+        version_id = await _confirm_over_http(client, project_id, cpm, auth)
+        svg_run = await _run(client, project_id, version_id, available, "svg", auth)
+        png_run = await _run(client, project_id, version_id, available, "png", auth)
 
     async with SessionFactory() as session:
         artefacts: dict[str, dict[str, tuple[str, bytes, str]]] = {}

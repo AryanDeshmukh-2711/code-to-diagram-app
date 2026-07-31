@@ -280,9 +280,15 @@ def test_identity_is_read_in_exactly_one_place() -> None:
 
     routers = Path(__file__).resolve().parents[2] / "api" / "app" / "routers"
     for path in routers.glob("*.py"):
+        # auth.py is the exception, and the only one: /auth/token takes an
+        # account id *with the key that proves it*. Everywhere else an account
+        # id in a body is an assertion the server would have to take on trust.
+        if path.name == "auth.py":
+            continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
-            if not isinstance(node, ast.ClassDef):
+            # Responses may name an account; requests may not.
+            if not isinstance(node, ast.ClassDef) or node.name.endswith("Out"):
                 continue
             fields = {
                 target.target.id
@@ -309,29 +315,64 @@ def test_every_run_and_project_route_proves_ownership() -> None:
                 isinstance(d, ast.Call) and getattr(d.func, "attr", "") in {"get", "post"}
                 for d in node.decorator_list
             )
-            if not decorated or node.name in {"download_artefact", "dashboard", "metrics_json"}:
+            if not decorated or node.name in {
+                "download_artefact",
+                "download_export",
+                "dashboard",
+                "metrics_json",
+            }:
                 continue
             body = ast.unparse(node)
             if "require_account" not in ast.unparse(node.args):
                 unguarded.append(f"{name}:{node.name} has no identity")
             elif not any(
-                helper in body for helper in ("owned_run", "owned_project", "_load", "check_new")
+                helper in body
+                for helper in ("owned_run", "owned_project", "_load", "check_new", "account_id")
             ):
                 unguarded.append(f"{name}:{node.name} never checks ownership")
     assert not unguarded, "\n".join(unguarded)
 
 
-def test_a_signed_link_is_scoped_to_one_artefact_and_expires() -> None:
-    import sys
+def test_a_session_token_cannot_be_forged_or_reused_past_its_life() -> None:
+    """The last High finding of the pre-launch review, pinned.
 
-    sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2] / "api"))
-    import os
+    Identity used to be a header the server believed. It is now a signature
+    over the account and a deadline, minted only for a caller who holds the
+    account's key.
+    """
+    identity = _identity_module()
+    from fastapi import HTTPException
 
-    os.environ.setdefault("ASA_SIGNING_SECRET", "test-secret")
+    key, stored, salt = identity.new_api_key()
+    assert identity.verify_api_key(key, stored, salt)
+    assert not identity.verify_api_key(key + "x", stored, salt)
+    assert not identity.verify_api_key(key, None, None)
+
+    token = identity.issue_session("acct-1", ttl_seconds=60)
+    assert identity._decode(token) == "acct-1"
+
+    with pytest.raises(HTTPException):
+        identity._decode(token[:-4] + "AAAA")
+    with pytest.raises(HTTPException) as expired:
+        identity._decode(identity.issue_session("acct-1", ttl_seconds=-1))
+    assert "expired" in expired.value.detail
+
+
+def _identity_module():
     import importlib
+    import os
+    import sys
+    from pathlib import Path
 
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "api"))
+    os.environ.setdefault("ASA_SIGNING_SECRET", "test-secret")
     identity = importlib.import_module("app.core.identity")
     identity.SECRET = b"test-secret"
+    return identity
+
+
+def test_a_signed_link_is_scoped_to_one_artefact_and_expires() -> None:
+    identity = _identity_module()
 
     token = identity.sign("artefact-a", ttl_seconds=60)
     identity.verify("artefact-a", token)

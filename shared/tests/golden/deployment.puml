@@ -1,0 +1,28 @@
+@startuml
+!theme plain
+skinparam shadowing false
+skinparam componentStyle rectangle
+
+node "Member Browser" as node_member_browser <<device>> {
+  component "Web Client" as comp_web_client
+}
+
+node "Application Server" as node_application_server <<server>> {
+  component "API Gateway" as comp_api_gateway
+  component "Catalogue Service" as comp_catalogue_service
+  component "Lending Service" as comp_lending_service
+}
+
+node "Notification Worker" as node_worker_server <<server>> {
+  component "Notification Service" as comp_notification_service
+}
+
+node "Database Server" as node_database_server <<server>> {
+  component "Library Database" as comp_library_database
+}
+
+node_member_browser -- node_application_server
+node_application_server -- node_worker_server
+node_worker_server -- node_database_server
+
+@enduml

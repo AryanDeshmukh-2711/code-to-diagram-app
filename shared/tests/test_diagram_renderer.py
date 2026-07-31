@@ -189,7 +189,13 @@ async def test_an_unexpected_exception_is_contained_too(cpm) -> None:
     # An engine raising something outside the EngineError hierarchy is a bug,
     # but it still must not abort the sibling diagrams.
     render, _ = renderer({"plantuml": [RuntimeError("unexpected")] * 2, "mermaid": [SVG]})
-    results = {r.diagram_type: r for r in await render.render_all(cpm)}
+    # Two named types, not the whole registry: render_all runs concurrently, so
+    # a scripted engine with two failures queued would hand them to whichever
+    # coroutine happened to start first. Naming the pair makes the test say
+    # what it means and stops it breaking when a mapper is added.
+    results = {
+        r.diagram_type: r for r in await render.render_all(cpm, ["class", "entity_relationship"])
+    }
 
     assert isinstance(results["class"], FailedDiagram)
     assert results["entity_relationship"].ok

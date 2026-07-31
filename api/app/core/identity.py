@@ -2,15 +2,18 @@
 
 Three things live here because they are one problem.
 
-**The caller's identity has exactly one source.** It is read from a header, in
-this module, and nowhere else. Before this, every endpoint took `accountId`
-out of the request body — which meant a caller could name any account they
-liked and the server believed them. Bodies are data; identity is not.
+**The caller's identity is proved, not asserted.** A request carries a signed
+session token, and a token is minted only in exchange for an account's API key,
+which is verified against a salted hash of 256 bits of urandom. An earlier
+version of this file read the account from a header and believed it, which
+authenticated nobody — that was the last High finding of the pre-launch review
+and it is closed here.
 
-This is the seam where a real authentication provider plugs in. Today it reads
-a header, which authenticates nobody: it stops accidental cross-account access
-and makes ownership checkable, and it does not stop a determined attacker.
-That gap is a launch blocker, recorded as such, and it is one function deep.
+Sessions are short and stateless. The signature covers the account and the
+deadline, so a token cannot be edited into a token for somebody else, and a
+stolen one stops working. There is no revocation list, which is the honest
+trade for having no session store: rotating an account's key invalidates every
+token minted from it.
 
 **Ownership is checked, and a miss looks like a miss.** Asking for someone
 else's run returns 404, not 403: a 403 confirms the id exists, which is a
@@ -25,6 +28,7 @@ working.
 import hashlib
 import hmac
 import os
+import secrets
 import time
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 
@@ -84,19 +88,79 @@ def verify(artefact_id: str, token: str) -> None:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="this link has expired")
 
 
-async def require_account(x_account_id: str | None = Header(default=None)) -> str:
-    """The calling account. The only place identity enters the system.
+SESSION_TTL_SECONDS = 12 * 3600
 
-    A missing header is refused rather than defaulted to a shared "anonymous"
-    account — which would put every anonymous user's projects in one bucket
-    that they could all read.
+
+def new_api_key() -> tuple[str, str, str]:
+    """A fresh key and what to store for it: (key, hash, salt).
+
+    The key is returned once and never stored. If a user loses it the answer is
+    a new key, not a recovery — a system that can show you your key can show it
+    to whoever reads the database.
     """
-    if not x_account_id or not x_account_id.strip():
+    key = secrets.token_urlsafe(32)
+    salt = secrets.token_hex(16)
+    return key, _hash_key(key, salt), salt
+
+
+def _hash_key(key: str, salt: str) -> str:
+    return hashlib.sha256(f"{salt}:{key}".encode()).hexdigest()
+
+
+def verify_api_key(key: str, stored_hash: str | None, salt: str | None) -> bool:
+    if not stored_hash or not salt:
+        return False
+    return hmac.compare_digest(_hash_key(key, salt), stored_hash)
+
+
+def issue_session(account_id: str, ttl_seconds: int = SESSION_TTL_SECONDS) -> str:
+    """A bearer token for one account, valid for a while."""
+    expires = int(time.time()) + ttl_seconds
+    digest = hmac.new(
+        _secret(), f"session:{account_id}:{expires}".encode(), hashlib.sha256
+    ).digest()[:24]
+    payload = urlsafe_b64encode(f"{account_id}:{expires}".encode()).decode().rstrip("=")
+    return f"{payload}.{urlsafe_b64encode(digest).decode().rstrip('=')}"
+
+
+def _decode(token: str) -> str:
+    try:
+        raw_payload, raw_signature = token.split(".", 1)
+        payload = urlsafe_b64decode(raw_payload + "=" * (-len(raw_payload) % 4)).decode()
+        account_id, raw_expiry = payload.rsplit(":", 1)
+        expires = int(raw_expiry)
+        supplied = urlsafe_b64decode(raw_signature + "=" * (-len(raw_signature) % 4))
+    except Exception:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, detail="malformed session token"
+        ) from None
+
+    expected = hmac.new(
+        _secret(), f"session:{account_id}:{expires}".encode(), hashlib.sha256
+    ).digest()[:24]
+    if not hmac.compare_digest(expected, supplied):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="invalid session token")
+    if expires < time.time():
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, detail="this session has expired; sign in again"
+        )
+    return account_id
+
+
+async def require_account(authorization: str | None = Header(default=None)) -> str:
+    """The calling account, proved. The only place identity enters the system.
+
+    A missing token is refused rather than defaulted to a shared "anonymous"
+    account, which would put every anonymous user's projects in one bucket that
+    they could all read.
+    """
+    if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
-            detail="no account on this request; send X-Account-Id",
+            detail="no session on this request; POST /auth/token for one",
+            headers={"WWW-Authenticate": "Bearer"},
         )
-    return x_account_id.strip()
+    return _decode(authorization.split(" ", 1)[1].strip())
 
 
 def _not_found(kind: str, identifier: str) -> HTTPException:
