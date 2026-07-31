@@ -48,7 +48,9 @@ from srs.ast import (
 )
 from srs.export.template import A4, DocumentTemplate
 
-EMBEDDABLE = {"image/png", "image/jpeg", "image/gif", "image/bmp", "image/tiff"}
+EMBEDDABLE = ("image/png", "image/jpeg", "image/gif", "image/bmp", "image/tiff")
+"""In preference order. DOCX cannot embed SVG, so a figure that only exists as
+vector has to be reported rather than dropped."""
 
 
 class UnsupportedImage(ValueError):
@@ -311,14 +313,15 @@ def _caption(
 def _add_figure(
     document, bookmarks: "_Bookmarks", block: Figure, template: DocumentTemplate
 ) -> None:
-    if block.mime not in EMBEDDABLE:
+    chosen = block.rendition(EMBEDDABLE)
+    if chosen is None:
         raise UnsupportedImage(
             f"cannot embed {block.mime!r} for figure {block.figure_id!r}: DOCX supports "
-            f"{', '.join(sorted(EMBEDDABLE))}. Render the run with format=png — the "
+            f"{', '.join(EMBEDDABLE)}. Render the run with format=png — the "
             f"diagram engines produce PNG natively."
         )
 
-    stream = io.BytesIO(block.image)
+    stream = io.BytesIO(chosen[1])
     paragraph = document.add_paragraph()
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = paragraph.add_run()

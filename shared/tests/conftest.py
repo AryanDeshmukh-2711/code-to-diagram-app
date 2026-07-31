@@ -21,6 +21,27 @@ def payload() -> dict[str, Any]:
     return copy.deepcopy(library_management_system_payload())
 
 
+def sample_png(width: int = 480, height: int = 320, dpi: int = 150) -> bytes:
+    """A real PNG, generated rather than hand-written.
+
+    It has to survive actual decoding: python-docx reads only the header, so a
+    truncated image passes there and then fails inside ReportLab, which decodes
+    the pixels. Generating one keeps the two exporters exercised by the same
+    bytes and exercises the DPI-based sizing path with a genuine density.
+    """
+    import io
+
+    from PIL import Image, ImageDraw
+
+    image = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((4, 4, width - 5, height - 5), outline="black", width=3)
+    draw.line((4, 4, width - 5, height - 5), fill="black", width=2)
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG", dpi=(dpi, dpi))
+    return buffer.getvalue()
+
+
 @pytest.fixture
 def db_schema(request) -> str:
     """One schema per test module, so two db-backed files cannot collide."""

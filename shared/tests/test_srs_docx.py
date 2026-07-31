@@ -18,6 +18,7 @@ import zipfile
 from io import BytesIO
 
 import pytest
+from conftest import sample_png
 from docx import Document as DocxDocument
 
 from cpm.fixtures import load_library_management_system
@@ -29,12 +30,7 @@ from srs.ieee830 import CAPTIONS, FigureInput
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
-# A 1x1 PNG. Real bytes, because python-docx reads the header for dimensions —
-# a stub would not exercise the sizing path at all.
-PNG = bytes.fromhex(
-    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
-    "0000000a49444154789c6360000002000100fdff03fa0000000049454e44ae4260 82".replace(" ", "")
-)
+PNG = sample_png()
 
 
 def inputs(*types: str) -> list[FigureInput]:

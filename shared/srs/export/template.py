@@ -83,6 +83,32 @@ class DocumentTemplate:
         return template
 
 
+@dataclass(frozen=True)
+class Watermark:
+    """FR-20: the mark a free-tier document carries.
+
+    Data, not behaviour, so the exporter cannot decide on its own whether to
+    apply one — the plan decides, and the exporter draws what it is given.
+    """
+
+    text: str
+    subtext: str = ""
+    angle: float = 45.0
+    size_pt: float = 46.0
+    opacity: float = 0.12
+    rgb: tuple[float, float, float] = (0.45, 0.45, 0.55)
+    font: str = "Calibri"
+
+
+FREE_TIER = Watermark(
+    text="AI Software Architect — Free plan",
+    subtext="Upgrade to remove this watermark",
+)
+"""Legible enough to be a real mark and light enough that the document under it
+stays readable. A watermark nobody can read past is a broken deliverable, and a
+watermark nobody notices is not a watermark."""
+
+
 A4 = DocumentTemplate()
 
 US_LETTER = replace(

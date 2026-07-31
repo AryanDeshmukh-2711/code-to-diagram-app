@@ -12,7 +12,19 @@ dependencies = [
     # default template carrying Word's real built-in styles, which is what
     # lets the exporter apply Heading 1/Caption rather than imitate them.
     "python-docx>=1.1",
+    # PDF export. Pure Python like python-docx: no cairo, no pango, no system
+    # packages in the worker image. svglib draws the diagrams as real vector,
+    # and canvas access is what makes the FR-20 watermark render-time rather
+    # than a second pass over a finished file.
+    "reportlab>=4.2",
+    "svglib>=1.5",
 ]
+
+[project.optional-dependencies]
+# pypdf is a test-only tool: the AT-1 equivalence test has to read text back
+# out of the PDF it produced, and reading it with the library that wrote it
+# would prove nothing.
+dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "pypdf>=5.0"]
 
 [build-system]
 requires = ["setuptools>=68"]

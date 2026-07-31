@@ -114,9 +114,29 @@ class Figure:
     diagram_type: str
     number: int | None = None
 
+    alternates: tuple[tuple[str, bytes], ...] = ()
+    """The same picture in other formats, as (mime, bytes).
+
+    One figure, several encodings, because the two exporters want different
+    ones: PDF draws SVG as vector so the diagram stays sharp and its text
+    stays selectable, while DOCX cannot embed SVG at all and needs the PNG.
+    Carrying both here is what lets a single assembled document produce both
+    files — if each export assembled its own document, AT-1's "identical
+    content" would be a coincidence rather than a property.
+    """
+
     @property
     def label(self) -> str:
         return f"Figure {self.number}" if self.number else "Figure"
+
+    def rendition(self, preferred: Sequence[str]) -> tuple[str, bytes] | None:
+        """The best available encoding for an exporter, or None if it has no
+        format it can use — which is a failure to report, never to ignore."""
+        available = {self.mime: self.image, **dict(self.alternates)}
+        for mime in preferred:
+            if mime in available:
+                return mime, available[mime]
+        return None
 
 
 @dataclass(frozen=True)

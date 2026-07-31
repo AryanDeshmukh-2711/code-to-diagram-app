@@ -10,7 +10,7 @@ WORKDIR /srv
 
 # Editable installs so the bind mounts in docker-compose stay live under --reload.
 COPY shared/ /srv/shared/
-RUN pip install --no-cache-dir -e /srv/shared
+RUN pip install --no-cache-dir -e "/srv/shared[dev]"
 
 COPY api/ /srv/api/
 RUN pip install --no-cache-dir -e "/srv/api[dev]"

@@ -59,6 +59,10 @@ class FigureInput:
     title: str
     image: bytes
     mime: str = "image/svg+xml"
+    alternates: tuple[tuple[str, bytes], ...] = ()
+    """The same diagram in other formats. A run rendered as both SVG and PNG
+    supplies one FigureInput carrying both, so PDF can use vector and DOCX can
+    use raster without the two documents being assembled separately."""
 
 
 FIGURE_PLACEMENT: dict[str, str] = {
@@ -114,6 +118,7 @@ def _figure_blocks(figures: Sequence[FigureInput], section_id: str, project: str
             mime=figure.mime,
             alt=f"{CAPTIONS.get(figure.diagram_type, figure.title)} for {project}",
             diagram_type=figure.diagram_type,
+            alternates=figure.alternates,
         )
         for figure in sorted(figures, key=_figure_sort_key)
         if FIGURE_PLACEMENT.get(figure.diagram_type, FALLBACK_SECTION) == section_id
