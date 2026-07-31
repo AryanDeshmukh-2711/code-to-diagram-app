@@ -13,6 +13,7 @@ documents — which is exactly the failure the AST layer exists to prevent, one
 level down.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -27,6 +28,13 @@ class Margins:
 
 @dataclass(frozen=True)
 class DocumentTemplate:
+    """The resolved view an exporter reads.
+
+    Built either from a preset or from a configured `Template`. The exporters
+    only ever see this, so a template loaded from JSON and a template written
+    in Python reach them by the same road.
+    """
+
     name: str = "A4 default"
 
     page_width_mm: float = 210.0
@@ -54,6 +62,15 @@ class DocumentTemplate:
     show_header_rule: bool = True
 
     title_page: bool = True
+
+    styles: Mapping[str, Any] = field(default_factory=dict)
+    """Named styles from a configured template, keyed by the names blocks use
+    (`body`, `heading1`, `cover_title`, ...). Empty for the presets, which
+    answer style questions from their own fields."""
+
+    def resolved(self, name: str):
+        """The style a block asked for, or None to fall back to the preset."""
+        return self.styles.get(name)
 
     @property
     def content_width_mm(self) -> float:
