@@ -14,9 +14,15 @@ from collections.abc import Mapping, Sequence
 
 from cpm.schema import CPM
 from diagrams.engines.base import DiagramEngine, EngineError
-from diagrams.mapper import DiagramMapper
+from diagrams.mapper import DiagramMapper, InsufficientModelData
 from diagrams.registry import get_mapper, registered_types
-from diagrams.types import DiagramResult, FailedDiagram, RenderedDiagram, RenderFormat
+from diagrams.types import (
+    DiagramResult,
+    FailedDiagram,
+    RenderedDiagram,
+    RenderFormat,
+    SkippedDiagram,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +48,14 @@ class DiagramRenderer:
 
         try:
             source = mapper.to_source(cpm)
+        except InsufficientModelData as exc:
+            # Not a failure. The model simply does not describe this, and
+            # inventing content to fill the figure is the one thing that must
+            # not happen here.
+            logger.info("skipping %s: %s", diagram_type, exc.reason)
+            return SkippedDiagram(
+                diagram_type=mapper.diagram_type, title=mapper.title, reason=exc.reason
+            )
         except Exception as exc:
             # A mapper bug is still only one diagram's problem.
             logger.exception("mapper for %s raised", diagram_type)

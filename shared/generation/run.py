@@ -23,7 +23,7 @@ from consistency.validator import (
 )
 from cpm.schema import CPM
 from diagrams.renderer import DiagramRenderer
-from diagrams.types import DiagramResult, RenderFormat
+from diagrams.types import DiagramResult, RenderFormat, SkippedDiagram
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,18 @@ class GenerationRunResult:
 
     @property
     def failed(self) -> list[DiagramResult]:
-        return [diagram for diagram in self.diagrams if not diagram.ok]
+        """Diagrams that could not be drawn. Excludes skipped ones — a diagram
+        the model never described is not a failure and must not be reported to
+        the user as one."""
+        return [
+            diagram
+            for diagram in self.diagrams
+            if not diagram.ok and not isinstance(diagram, SkippedDiagram)
+        ]
+
+    @property
+    def skipped(self) -> list[SkippedDiagram]:
+        return [diagram for diagram in self.diagrams if isinstance(diagram, SkippedDiagram)]
 
 
 async def execute_generation_run(

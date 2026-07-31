@@ -16,7 +16,7 @@ from diagrams.engines import (
     MermaidEngine,
     PlantUMLEngine,
 )
-from diagrams.mapper import DiagramMapper
+from diagrams.mapper import DiagramMapper, InsufficientModelData
 from diagrams.registry import (
     MapperRegistrationError,
     UnknownDiagramType,
@@ -31,6 +31,7 @@ from diagrams.types import (
     FailedDiagram,
     RenderedDiagram,
     RenderFormat,
+    SkippedDiagram,
 )
 
 __all__ = [
@@ -43,11 +44,13 @@ __all__ = [
     "EngineError",
     "EngineUnavailable",
     "FailedDiagram",
+    "InsufficientModelData",
     "MapperRegistrationError",
     "MermaidEngine",
     "PlantUMLEngine",
     "RenderFormat",
     "RenderedDiagram",
+    "SkippedDiagram",
     "UnknownDiagramType",
     "get_mapper",
     "registered_types",

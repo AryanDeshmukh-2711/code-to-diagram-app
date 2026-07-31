@@ -56,4 +56,23 @@ class FailedDiagram:
         return False
 
 
-DiagramResult = RenderedDiagram | FailedDiagram
+@dataclass(frozen=True)
+class SkippedDiagram:
+    """Not produced, because the model does not describe it.
+
+    Deliberately distinct from `FailedDiagram`. "We could not draw this" and
+    "you never told us about this" need different words in the document and
+    different actions from the user, and collapsing them would let a genuine
+    render failure hide behind a shrug.
+    """
+
+    diagram_type: str
+    title: str
+    reason: str
+
+    @property
+    def ok(self) -> bool:
+        return False
+
+
+DiagramResult = RenderedDiagram | FailedDiagram | SkippedDiagram

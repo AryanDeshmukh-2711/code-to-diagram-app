@@ -177,6 +177,51 @@ def test_use_case_diagram_links_each_actor_to_its_use_cases(cpm) -> None:
 
 
 # --------------------------------------------------------------------------
+# Sequence diagram specifics
+# --------------------------------------------------------------------------
+
+
+def test_sequence_draws_a_shared_id_as_an_actor(cpm) -> None:
+    # "member" is both a person who borrows and a record that is stored. On a
+    # sequence diagram the person is what is meant, so actors win the lookup.
+    source = get_mapper("sequence").to_source(cpm)
+    assert 'actor "Member" as member' in source
+    assert 'participant "Member" as member' not in source
+
+
+def test_sequence_keeps_every_flow_rather_than_truncating_to_the_first(cpm) -> None:
+    source = get_mapper("sequence").to_source(cpm)
+    for flow in cpm.flows:
+        assert f"== {flow.name} ==" in source
+
+
+def test_sequence_declares_participants_in_first_appearance_order(cpm) -> None:
+    # Declaration order is lifeline order, which is layout. Sorting would make
+    # every flow zigzag across the page.
+    source = get_mapper("sequence").to_source(cpm)
+    positions = [source.index(f"as {p}\n") for p in ("member", "librarian", "book", "loan")]
+    assert positions == sorted(positions)
+
+
+def test_sequence_orders_steps_by_their_declared_order(cpm) -> None:
+    source = get_mapper("sequence").to_source(cpm)
+    first = cpm.flows[0]
+    messages = [step.message for step in sorted(first.steps, key=lambda s: s.order)]
+    positions = [source.index(message) for message in messages]
+    assert positions == sorted(positions)
+
+
+def test_sequence_skips_rather_than_inventing_when_there_are_no_flows(cpm) -> None:
+    from cpm.schema import CPM
+    from diagrams.mapper import InsufficientModelData
+
+    without_flows = CPM.model_validate({**cpm.model_dump(by_alias=True, mode="json"), "flows": []})
+    with pytest.raises(InsufficientModelData) as excinfo:
+        get_mapper("sequence").to_source(without_flows)
+    assert "step by step" in excinfo.value.reason, "the message must tell the user what to add"
+
+
+# --------------------------------------------------------------------------
 # Shape
 # --------------------------------------------------------------------------
 
