@@ -53,12 +53,12 @@ class ConsistencyReport:
         if self.ok:
             return (
                 f"FR-10 consistency: OK — {self.recognised_names} names checked "
-                f"across {self.checked_diagrams} diagrams."
+                f"across {self.checked_diagrams} sources."
             )
         lines = [
             f"FR-10 consistency FAILED — {len(self.violations)} "
             f"mismatch{'' if len(self.violations) == 1 else 'es'} "
-            f"across {self.checked_diagrams} diagrams:",
+            f"across {self.checked_diagrams} sources:",
         ]
         lines.extend(violation.render() for violation in self.violations)
         return "\n".join(lines)
@@ -163,9 +163,23 @@ def validate_consistency(cpm: CPM, diagrams) -> ConsistencyReport:
             continue
         checked += 1
 
+        # Spans of candidates that already matched a CPM name exactly. A longer
+        # name swallows the shorter candidates inside it: "Borrow Book" is the
+        # use case, and "Borrow" is not a second reference that happens to be
+        # misspelt. Extractors that emit non-overlapping tokens set no span and
+        # are unaffected.
+        consumed: list[tuple[int, int]] = []
+
         for found in extract_names(source, str(diagram.engine)):
+            if found.span and any(
+                start <= found.span[0] and found.span[1] <= end for start, end in consumed
+            ):
+                continue
+
             if found.text in exact:
                 recognised += 1
+                if found.span:
+                    consumed.append(found.span)
                 continue
 
             candidates = by_key.get(canonical_name_key(found.text))

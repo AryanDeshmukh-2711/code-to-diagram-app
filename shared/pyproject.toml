@@ -10,7 +10,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["cpm*", "llm*", "extraction*", "diagrams*", "consistency*", "generation*", "review*", "store*"]
+include = ["cpm*", "llm*", "extraction*", "diagrams*", "consistency*", "generation*", "review*", "store*", "srs*"]
 
 [tool.setuptools.package-data]
 cpm = ["fixtures/*.json"]
