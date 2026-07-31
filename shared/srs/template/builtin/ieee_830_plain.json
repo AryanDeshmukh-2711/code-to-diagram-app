@@ -1,0 +1,185 @@
+{
+  "id": "ieee-830-plain",
+  "name": "IEEE 830 plain (Times, A4)",
+  "description": "The standard's own house style: Times 12pt, A4, numbered sections, dotted contents. The default when no institution imposes one.",
+  "origin": "IEEE Std 830-1998 typographic conventions. No institutional branding.",
+  "page": {
+    "width_mm": 210.0,
+    "height_mm": 297.0,
+    "margin_top_mm": 25.4,
+    "margin_bottom_mm": 25.4,
+    "margin_inner_mm": 25.4,
+    "margin_outer_mm": 25.4,
+    "mirror_margins": false
+  },
+  "styles": {
+    "body": {
+      "font": "Times New Roman",
+      "size_pt": 12.0,
+      "align": "justify",
+      "line_spacing": 1.3,
+      "space_after_pt": 8.0
+    },
+    "heading1": {
+      "font": "Times New Roman",
+      "size_pt": 15.0,
+      "bold": true,
+      "line_spacing": 1.2,
+      "space_before_pt": 12.0,
+      "space_after_pt": 6.0,
+      "keep_with_next": true
+    },
+    "heading2": {
+      "font": "Times New Roman",
+      "size_pt": 14.0,
+      "bold": true,
+      "line_spacing": 1.2,
+      "space_before_pt": 10.0,
+      "space_after_pt": 6.0,
+      "keep_with_next": true
+    },
+    "heading3": {
+      "font": "Times New Roman",
+      "size_pt": 12.0,
+      "bold": true,
+      "line_spacing": 1.2,
+      "space_before_pt": 8.0,
+      "space_after_pt": 4.0,
+      "keep_with_next": true
+    },
+    "caption": {
+      "font": "Times New Roman",
+      "size_pt": 9.0,
+      "italic": true,
+      "align": "center",
+      "line_spacing": 1.0,
+      "space_before_pt": 4.0,
+      "space_after_pt": 12.0
+    },
+    "cover_title": {
+      "font": "Times New Roman",
+      "size_pt": 22.0,
+      "bold": true,
+      "align": "center",
+      "line_spacing": 1.1,
+      "space_after_pt": 12.0
+    },
+    "cover_field": {
+      "font": "Times New Roman",
+      "size_pt": 12.0,
+      "align": "center",
+      "line_spacing": 1.3,
+      "space_after_pt": 2.0
+    },
+    "index_entry": {
+      "font": "Times New Roman",
+      "size_pt": 11.0,
+      "line_spacing": 1.2,
+      "space_after_pt": 2.0
+    }
+  },
+  "section_numbering": {
+    "level_prefixes": [
+      "",
+      "",
+      "",
+      ""
+    ],
+    "separator": ".",
+    "suffix": " ",
+    "page_break_before_top_level": false
+  },
+  "figure_numbering": {
+    "scope": "document",
+    "label": "Figure",
+    "format": "{label} {number}: {caption}",
+    "position": "below",
+    "style": "caption"
+  },
+  "table_numbering": {
+    "scope": "document",
+    "label": "Table",
+    "format": "{label} {number}: {caption}",
+    "position": "above",
+    "style": "caption"
+  },
+  "front_matter": [
+    {
+      "kind": "page",
+      "id": "cover",
+      "blocks": [
+        {
+          "kind": "spacer",
+          "height_mm": 60.0
+        },
+        {
+          "kind": "text",
+          "text": "Software Requirements Specification",
+          "style": "cover_field"
+        },
+        {
+          "kind": "text",
+          "text": "{title}",
+          "style": "cover_title"
+        },
+        {
+          "kind": "spacer",
+          "height_mm": 8.0
+        },
+        {
+          "kind": "text",
+          "text": "{institution}",
+          "style": "cover_field"
+        },
+        {
+          "kind": "text",
+          "text": "{authors}",
+          "style": "cover_field"
+        },
+        {
+          "kind": "text",
+          "text": "Version {version} · {date}",
+          "style": "cover_field"
+        }
+      ]
+    },
+    {
+      "kind": "index",
+      "of": "contents",
+      "title": "Contents",
+      "layout": "dotted",
+      "max_depth": 3,
+      "page_numbers": true,
+      "page_break_after": false
+    },
+    {
+      "kind": "index",
+      "of": "figures",
+      "title": "List of Figures",
+      "layout": "dotted",
+      "page_numbers": true,
+      "page_break_after": false
+    },
+    {
+      "kind": "index",
+      "of": "tables",
+      "title": "List of Tables",
+      "layout": "dotted",
+      "page_numbers": true
+    }
+  ],
+  "running": {
+    "header_right": "{project}",
+    "footer_center": "Page {page} of {pages}",
+    "rule_under_header": true,
+    "on_front_matter": false
+  },
+  "fields": [
+    {
+      "key": "institution",
+      "label": "Institution",
+      "required": false,
+      "placeholder": "Your university"
+    }
+  ]
+}

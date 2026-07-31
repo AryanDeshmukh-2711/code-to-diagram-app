@@ -30,6 +30,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.platypus import (
     BaseDocTemplate,
     Frame,
+    HRFlowable,
     Image,
     KeepTogether,
     ListFlowable,
@@ -52,13 +53,21 @@ from srs.ast import (
     BulletList,
     Document,
     Figure,
+    ImageBlock,
     ListOfFigures,
     ListOfTables,
     NumberedList,
     Paragraph,
+    Rule,
     Section,
     Table,
     TableOfContents,
+)
+from srs.ast import (
+    PageBreak as AstPageBreak,
+)
+from srs.ast import (
+    Spacer as AstSpacer,
 )
 from srs.export.template import A4, DocumentTemplate, Watermark
 from srs.numbering import render_runs
@@ -119,7 +128,7 @@ class _Painter:
 
     def _draw_header(self, canvas, doc) -> None:
         template = self.template
-        text = template.header_text.format(project=self.project)
+        text = template.header_text.replace("{project}", self.project)
         y = (template.page_height_mm - template.margins.top_mm + 6) * mm
 
         canvas.saveState()
@@ -296,6 +305,25 @@ def _bold(font: str) -> str:
     ]
 
 
+_ALIGNMENT = {"left": 0, "center": 1, "right": 2, "justify": 4}
+
+
+def _face(style) -> str:
+    """The standard PDF face for a configured style, bold and italic included."""
+    base = _font(style.font)
+    if style.bold and style.italic:
+        return {
+            "Helvetica": "Helvetica-BoldOblique",
+            "Times-Roman": "Times-BoldItalic",
+            "Courier": "Courier-BoldOblique",
+        }[base]
+    if style.bold:
+        return _bold(style.font)
+    if style.italic:
+        return _italic(style.font)
+    return base
+
+
 def _styles(template: DocumentTemplate) -> dict[str, ParagraphStyle]:
     base = getSampleStyleSheet()
     body_font = _font(template.body_font)
@@ -351,6 +379,20 @@ def _styles(template: DocumentTemplate) -> dict[str, ParagraphStyle]:
             spaceAfter=0,
         ),
     }
+    for name, configured in (template.styles or {}).items():
+        styles[name] = ParagraphStyle(
+            f"ASA {name}",
+            parent=base["BodyText"],
+            fontName=_face(configured),
+            fontSize=configured.size_pt,
+            leading=configured.size_pt * configured.line_spacing,
+            textColor=HexColor(f"#{configured.colour}"),
+            alignment=_ALIGNMENT[configured.align],
+            spaceBefore=configured.space_before_pt,
+            spaceAfter=configured.space_after_pt,
+            keepWithNext=configured.keep_with_next,
+        )
+
     for level in (1, 2, 3, 4):
         styles[f"Heading {level}"] = ParagraphStyle(
             f"ASA Heading {level}",
@@ -420,8 +462,19 @@ class _DocTemplate(BaseDocTemplate):
     numbering, one level down.
     """
 
+    toc_max_depth = 9
+
     def afterFlowable(self, flowable) -> None:
         if isinstance(flowable, _HeadingParagraph):
+            if flowable.entry_level >= self.toc_max_depth:
+                # Deeper than the template asked its contents page to show.
+                # Bookmarked and outlined all the same: the index is what has
+                # a depth limit, not the document.
+                self.canv.bookmarkPage(flowable.entry_key)
+                self.canv.addOutlineEntry(
+                    flowable.entry_text, flowable.entry_key, level=flowable.entry_level
+                )
+                return
             self.canv.bookmarkPage(flowable.entry_key)
             self.canv.addOutlineEntry(
                 flowable.entry_text, flowable.entry_key, level=flowable.entry_level
@@ -477,8 +530,11 @@ def _svg_drawing(payload: bytes):
         from svglib.svglib import svg2rlg
 
         return svg2rlg(io.BytesIO(payload))
-    except Exception:  # pragma: no cover - depends on the SVG in hand
-        logger.exception("svglib could not convert an SVG figure")
+    except Exception as exc:  # pragma: no cover - depends on the SVG in hand
+        # A warning, not an exception log: this is a handled condition with a
+        # raster fallback right behind it, and a twenty-line traceback above an
+        # otherwise clean run reads as a crash.
+        logger.warning("svglib could not convert an SVG figure: %s: %s", type(exc).__name__, exc)
         return None
 
 
@@ -511,9 +567,33 @@ def _raster_image(payload: bytes, available: float) -> Image:
 
 
 def _table_flowable(block: Table, template: DocumentTemplate, styles) -> PdfTable:
+    cell_style = _style_for(styles, block.cell_style, "Cell")
+    available = template.content_width_mm * mm
+
+    if block.variant == "plain":
+        # A signature row: no borders, no header, centred under a ruled line.
+        body = [
+            [PdfParagraph(_escape(value).replace(chr(10), "<br/>"), cell_style) for value in row]
+            for row in block.rows
+        ]
+        table = PdfTable(
+            body,
+            colWidths=[available / len(block.columns)] * len(block.columns),
+            hAlign="CENTER",
+        )
+        table.setStyle(
+            TableStyle(
+                [
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 2),
+                ]
+            )
+        )
+        return table
+
     header = [PdfParagraph(f"<b>{_escape(name)}</b>", styles["Cell"]) for name in block.columns]
     body = [[PdfParagraph(_escape(value), styles["Cell"]) for value in row] for row in block.rows]
-    available = template.content_width_mm * mm
     table = PdfTable(
         [header, *body],
         colWidths=[available / len(block.columns)] * len(block.columns),
@@ -560,9 +640,67 @@ class _Index(PdfTableOfContents):
             self.addEntry(*stuff)
 
 
-def _index_flowable(kind: str, template: DocumentTemplate):
+class _IndexTable(_Index):
+    """A bordered index whose page numbers are measured, not left blank.
+
+    It listens for the same notifications the dotted version does, so its page
+    column is filled from where the content actually landed. Building the grid
+    at wrap time rather than at story time is what gives it access to those
+    entries: they do not exist until the layout pass has run.
+    """
+
+    _built = None
+
+    def __init__(self, kind: str, styles, block, template: DocumentTemplate, cell_style):
+        super().__init__(kind, styles)
+        self._block = block
+        self._template = template
+        self._cell = cell_style
+
+    def _grid(self) -> PdfTable:
+        columns = list(self._block.columns)
+        header = [PdfParagraph(f"<b>{_escape(name)}</b>", self._cell) for name in columns]
+        rows = []
+        # ReportLab clears _entries at the start of each layout pass and keeps
+        # the previous pass in _lastEntries; the final pass draws from the
+        # latter. Reading only _entries produces a headed table with no rows.
+        collected = self._entries or getattr(self, "_lastEntries", [])
+        for position, entry in enumerate(collected, start=1):
+            text, page = entry[1], entry[2]
+            values = [str(position), text, str(page)][: len(columns)]
+            rows.append([PdfParagraph(_escape(value), self._cell) for value in values])
+        available = self._template.content_width_mm * mm
+        widths = [available * share for share in (0.12, 0.68, 0.20)][: len(columns)]
+        table = PdfTable([header, *rows], colWidths=widths, repeatRows=1, hAlign="CENTER")
+        table.setStyle(
+            TableStyle(
+                [
+                    ("GRID", (0, 0), (-1, -1), 0.4, HexColor("#8F8F8F")),
+                    ("BACKGROUND", (0, 0), (-1, 0), HexColor("#EDEDED")),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ]
+            )
+        )
+        return table
+
+    def wrap(self, availWidth, availHeight):
+        self._built = self._grid()
+        return self._built.wrap(availWidth, availHeight)
+
+    def split(self, availWidth, availHeight):
+        return self._grid().split(availWidth, availHeight)
+
+    def drawOn(self, canvas, x, y, _sW=0):
+        (self._built or self._grid()).drawOn(canvas, x, y, _sW)
+
+
+def _index_flowable(kind: str, template: DocumentTemplate, block=None, cell_style=None):
     styles = _index_styles(template)
-    return _Index(kind, styles if kind == "TOC" else styles[:1])
+    levels = styles if kind == "TOC" else styles[:1]
+    if block is not None and block.layout == "table":
+        return _IndexTable(kind, levels, block, template, cell_style)
+    return _Index(kind, levels)
 
 
 def export_pdf(
@@ -597,6 +735,9 @@ def export_pdf(
         title=source.title,
         author=", ".join(source.meta.authors) or None,
         subject=f"IEEE 830 Software Requirements Specification for {source.meta.project_name}",
+    )
+    doc.toc_max_depth = max(
+        (b.max_depth for b in source.front_matter if isinstance(b, TableOfContents)), default=9
     )
     frame = Frame(
         doc.leftMargin, doc.bottomMargin, doc.width, doc.height, id="body", showBoundary=0
@@ -651,9 +792,11 @@ def export_pdf(
 
 
 def _append_section(story, section: Section, template, styles, counters, level: int) -> None:
+    if section.page_break_before:
+        story.append(PageBreak())
     story.append(
         _HeadingParagraph(
-            _escape(f"{section.number} {section.title}"),
+            _escape(section.heading),
             styles[f"Heading {min(level, 4)}"],
             level=min(level, 3) - 1,
             key=f"sec-{section.section_id}",
@@ -665,9 +808,32 @@ def _append_section(story, section: Section, template, styles, counters, level: 
         _append_section(story, child, template, styles, counters, level + 1)
 
 
+def _style_for(styles, name: str, fallback: str = "Normal"):
+    return styles.get(name) or styles[fallback]
+
+
 def _append_block(story, block, template, styles, counters) -> None:
     if isinstance(block, Paragraph):
-        story.append(PdfParagraph(_escape(render_runs(block.runs)), styles["Normal"]))
+        style = _style_for(styles, block.style)
+        if block.align:
+            from reportlab.lib.styles import ParagraphStyle as _PS
+
+            style = _PS(
+                f"{style.name}-{block.align}", parent=style, alignment=_ALIGNMENT[block.align]
+            )
+        story.append(PdfParagraph(_escape(render_runs(block.runs)), style))
+    elif isinstance(block, AstSpacer):
+        story.append(Spacer(1, block.height_mm * mm))
+    elif isinstance(block, Rule):
+        story.append(
+            HRFlowable(
+                width="100%", thickness=0.8, color=HexColor("#808080"), spaceBefore=4, spaceAfter=8
+            )
+        )
+    elif isinstance(block, AstPageBreak):
+        story.append(PageBreak())
+    elif isinstance(block, ImageBlock):
+        story.append(_cover_image(block))
     elif isinstance(block, BulletList | NumberedList):
         story.append(
             ListFlowable(
@@ -692,18 +858,22 @@ def _append_block(story, block, template, styles, counters) -> None:
         story.append(image)
         story.append(
             _CaptionParagraph(
-                _escape(f"{block.label}: {block.caption}"),
+                _escape(block.formatted_caption or f"{block.label}: {block.caption}"),
                 styles["Caption"],
                 kind="Figure",
                 key=f"fig-{block.figure_id}",
             )
         )
     elif isinstance(block, Table):
+        if not block.caption:
+            story.append(_table_flowable(block, template, styles))
+            story.append(Spacer(1, 4 * mm))
+            return
         # Caption above the table, per convention, and pinned to it — a caption
         # stranded at the foot of the previous page is the same defect as an
         # orphaned figure caption.
         caption = _CaptionParagraph(
-            _escape(f"{block.label}: {block.caption}"),
+            _escape(block.formatted_caption or f"{block.label}: {block.caption}"),
             styles["Caption"],
             kind="Table",
             key=f"tbl-{block.table_id}",
@@ -713,11 +883,25 @@ def _append_block(story, block, template, styles, counters) -> None:
         story.append(_table_flowable(block, template, styles))
         story.append(Spacer(1, 6 * mm))
     elif isinstance(block, TableOfContents | ListOfFigures | ListOfTables):
-        title, kind = {
-            TableOfContents: ("Contents", "TOC"),
-            ListOfFigures: ("List of Figures", "Figure"),
-            ListOfTables: ("List of Tables", "Table"),
-        }[type(block)]
-        story.append(PdfParagraph(title, styles["Heading 1"]))
-        story.append(_index_flowable(kind, template))
+        kind = {TableOfContents: "TOC", ListOfFigures: "Figure", ListOfTables: "Table"}[type(block)]
+        story.append(PdfParagraph(_escape(block.title), styles["Heading 1"]))
+        story.append(_index_flowable(kind, template, block, styles["Cell"]))
         story.append(Spacer(1, 4 * mm))
+    else:
+        # Never silently. A block type the exporter does not know would vanish
+        # from the PDF while staying in the DOCX, which is precisely the
+        # divergence AT-1 exists to catch — and it would catch it far from here.
+        raise TypeError(f"the PDF exporter has no rule for {type(block).__name__}")
+
+
+def _cover_image(block: ImageBlock) -> Image:
+    """A crest on a cover page. Not a figure: unnumbered and uncaptioned."""
+    from PIL import Image as PilImage
+
+    with PilImage.open(io.BytesIO(block.image)) as probe:
+        pixel_width, pixel_height = probe.size
+    limit_w, limit_h = block.max_width_mm * mm, block.max_height_mm * mm
+    scale = min(limit_w / pixel_width, limit_h / pixel_height)
+    image = Image(io.BytesIO(block.image), width=pixel_width * scale, height=pixel_height * scale)
+    image.hAlign = block.align.upper()
+    return image

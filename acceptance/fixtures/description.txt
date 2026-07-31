@@ -1,0 +1,30 @@
+The Library Management System is a web application used by a university library
+to manage its physical collection and the people who borrow from it. The library
+holds books, each identified by an ISBN and recorded with a title, an author, a
+publication year and the number of copies currently available. Every book
+belongs to exactly one category, such as Fiction, Reference or Periodicals, and
+a category groups many books.
+
+Members are registered library users. A member record holds a membership number,
+a name, an email address, a join date and whether the membership is currently
+active. Librarians are staff members who operate the lending desk; each
+librarian has a staff identifier and an assigned desk. Both members and
+librarians are people, and share a name and an email address. An administrator
+manages member accounts and system configuration.
+
+A member borrows a book by presenting it at the lending desk, where a librarian
+scans the ISBN. The system checks that the member is active, has not reached the
+borrowing limit and has no outstanding fines above the threshold, then creates a
+loan with a due date and reduces the number of available copies. Returning a
+book closes the loan and restores the copy count. If a book is returned after
+its due date, the system raises a fine against the member, recording the amount,
+the reason and the date it was paid.
+
+When no copy of a book is available, a member may place a reservation, which
+records the date it was placed and the date it expires. A reservation is either
+pending, ready for collection, collected, expired or cancelled. Librarians also
+maintain the catalogue by adding, editing and withdrawing books, and manage
+member accounts.
+
+The system must be available during library opening hours and must record every
+loan and return so that the collection can be audited.

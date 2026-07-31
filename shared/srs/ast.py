@@ -72,6 +72,11 @@ Inline = Text | FigureRef | TableRef | SectionRef
 @dataclass(frozen=True)
 class Paragraph:
     runs: tuple[Inline, ...]
+    style: str = "body"
+    """A style *name*, resolved by the exporter against the template. The AST
+    never carries a font or a size: that is the difference between a document
+    model and a rendering."""
+    align: str | None = None
 
 
 @dataclass(frozen=True)
@@ -91,10 +96,16 @@ class Table:
     columns: tuple[str, ...]
     rows: tuple[tuple[str, ...], ...]
     number: int | None = None
+    display_number: str | None = None
+    """What the reader sees: "7" in one template, "3.2" in another. The
+    integer stays the running count; this is what the caption prints."""
+    formatted_caption: str | None = None
+    variant: str = "grid"
+    cell_style: str = "body"
 
     @property
     def label(self) -> str:
-        return f"Table {self.number}" if self.number else "Table"
+        return f"Table {self.display_number or self.number}" if self.number else "Table"
 
 
 @dataclass(frozen=True)
@@ -113,6 +124,8 @@ class Figure:
     alt: str
     diagram_type: str
     number: int | None = None
+    display_number: str | None = None
+    formatted_caption: str | None = None
 
     alternates: tuple[tuple[str, bytes], ...] = ()
     """The same picture in other formats, as (mime, bytes).
@@ -127,7 +140,7 @@ class Figure:
 
     @property
     def label(self) -> str:
-        return f"Figure {self.number}" if self.number else "Figure"
+        return f"Figure {self.display_number or self.number}" if self.number else "Figure"
 
     def rendition(self, preferred: Sequence[str]) -> tuple[str, bytes] | None:
         """The best available encoding for an exporter, or None if it has no
@@ -150,16 +163,64 @@ class IndexEntry:
 @dataclass(frozen=True)
 class TableOfContents:
     entries: tuple[IndexEntry, ...] = ()
+    title: str = "Contents"
+    layout: str = "dotted"
+    """"dotted" is a table of contents with leaders; "table" is a bordered
+    grid with headed columns. Real templates ask for both and neither is a
+    styling variant of the other."""
+    columns: tuple[str, ...] = ()
+    max_depth: int = 3
+    page_numbers: bool = True
 
 
 @dataclass(frozen=True)
 class ListOfFigures:
     entries: tuple[IndexEntry, ...] = ()
+    title: str = "List of Figures"
+    layout: str = "dotted"
+    columns: tuple[str, ...] = ()
+    page_numbers: bool = True
 
 
 @dataclass(frozen=True)
 class ListOfTables:
     entries: tuple[IndexEntry, ...] = ()
+    title: str = "List of Tables"
+    layout: str = "dotted"
+    columns: tuple[str, ...] = ()
+    page_numbers: bool = True
+
+
+@dataclass(frozen=True)
+class Spacer:
+    height_mm: float
+
+
+@dataclass(frozen=True)
+class Rule:
+    """A horizontal line. Cover pages use them; nothing else does."""
+
+
+@dataclass(frozen=True)
+class PageBreak:
+    pass
+
+
+@dataclass(frozen=True)
+class ImageBlock:
+    """An image that is not a figure — a crest on a cover page (FR-15).
+
+    Distinct from `Figure` because it is not numbered, not captioned and not
+    listed: putting a logo through the figure machinery would make it
+    "Figure 1" in every document that has one.
+    """
+
+    image: bytes
+    mime: str
+    max_width_mm: float = 40.0
+    max_height_mm: float = 40.0
+    align: str = "center"
+    alt: str = ""
 
 
 Block = (
@@ -171,6 +232,10 @@ Block = (
     | TableOfContents
     | ListOfFigures
     | ListOfTables
+    | Spacer
+    | Rule
+    | PageBreak
+    | ImageBlock
 )
 
 # ---------------------------------------------------------------------------
@@ -185,9 +250,17 @@ class Section:
     blocks: tuple[Block, ...] = ()
     subsections: tuple["Section", ...] = ()
     number: str | None = None
+    page_break_before: bool = False
+    heading_style: str | None = None
+    heading_text: str | None = None
+    """What the heading actually reads. A template that prefixes "Chapter " at
+    the top level composes it once, here, so the exporters and the contents
+    page cannot disagree about what the heading says."""
 
     @property
     def heading(self) -> str:
+        if self.heading_text:
+            return self.heading_text
         return f"{self.number} {self.title}" if self.number else self.title
 
 
@@ -215,8 +288,12 @@ class Document:
 # ---------------------------------------------------------------------------
 
 
-def para(*parts: str | Inline) -> Paragraph:
-    return Paragraph(runs=tuple(Text(p) if isinstance(p, str) else p for p in parts))
+def para(*parts: str | Inline, style: str = "body", align: str | None = None) -> Paragraph:
+    return Paragraph(
+        runs=tuple(Text(p) if isinstance(p, str) else p for p in parts),
+        style=style,
+        align=align,
+    )
 
 
 def bullets(items: Sequence[str | Sequence[Inline]]) -> BulletList:
