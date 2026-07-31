@@ -477,8 +477,11 @@ def _svg_drawing(payload: bytes):
         from svglib.svglib import svg2rlg
 
         return svg2rlg(io.BytesIO(payload))
-    except Exception:  # pragma: no cover - depends on the SVG in hand
-        logger.exception("svglib could not convert an SVG figure")
+    except Exception as exc:  # pragma: no cover - depends on the SVG in hand
+        # A warning, not an exception log: this is a handled condition with a
+        # raster fallback right behind it, and a twenty-line traceback above an
+        # otherwise clean run reads as a crash.
+        logger.warning("svglib could not convert an SVG figure: %s: %s", type(exc).__name__, exc)
         return None
 
 

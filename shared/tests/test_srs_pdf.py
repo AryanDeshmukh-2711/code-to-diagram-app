@@ -11,7 +11,6 @@ changed word fails rather than being absorbed by a tolerant normaliser.
 
 import ast as python_ast
 import copy
-import difflib
 import io
 import re
 import time
@@ -19,9 +18,6 @@ from pathlib import Path
 
 import pytest
 from conftest import sample_png
-from docx import Document as DocxDocument
-from docx.table import Table as DocxTable
-from docx.text.paragraph import Paragraph as DocxParagraph
 from pypdf import PdfReader
 
 from cpm.fixtures import library_management_system_payload, load_library_management_system
@@ -29,6 +25,7 @@ from cpm.schema import CPM
 from srs.assemble import assemble_srs
 from srs.ast import BulletList, NumberedList, walk_blocks
 from srs.export import pdf as pdf_module
+from srs.export.compare import compare, docx_body_words, figure_vocabulary, pdf_body_words
 from srs.export.docx import export_docx
 from srs.export.pdf import UnrenderableFigure, export_pdf
 from srs.export.template import A4, FREE_TIER, IEEE_TIMES, US_LETTER, Watermark
@@ -79,53 +76,6 @@ def reader_of(result) -> PdfReader:
 # --------------------------------------------------------------------------
 
 
-def docx_body_text(blob: bytes) -> list[str]:
-    """Everything from section 1 onward, in document order, tables included."""
-    document = DocxDocument(io.BytesIO(blob))
-    out: list[str] = []
-    started = False
-    for child in document.element.body.iterchildren():
-        if child.tag.endswith("}p"):
-            paragraph = DocxParagraph(child, document)
-            if paragraph.style.name == "Heading 1" and paragraph.text.startswith("1 "):
-                started = True
-            if started and paragraph.text.strip():
-                out.append(paragraph.text)
-        elif child.tag.endswith("}tbl") and started:
-            for row in DocxTable(child, document).rows:
-                for cell in row.cells:
-                    if cell.text.strip():
-                        out.append(cell.text)
-    return out
-
-
-def pdf_body_text(blob: bytes, header: str) -> list[str]:
-    """The same span of the PDF, minus the page furniture.
-
-    Where the body starts is taken from the document's own outline rather than
-    guessed from where a phrase first appears — the contents page mentions
-    every heading too.
-    """
-    reader = PdfReader(io.BytesIO(blob))
-    start = min(
-        reader.get_destination_page_number(entry)
-        for entry in reader.outline
-        if not isinstance(entry, list)
-    )
-    lines: list[str] = []
-    for page in reader.pages[start:]:
-        for line in (page.extract_text() or "").splitlines():
-            text = line.strip()
-            if not text or text == header or re.fullmatch(r"Page \d+ of \d+", text):
-                continue
-            lines.append(text)
-    return lines
-
-
-def is_list_marker(token: str) -> bool:
-    return token in {"•", "\x7f", "-", "–"} or (token.isdigit() and len(token) <= 3)
-
-
 # --------------------------------------------------------------------------
 # AT-1
 # --------------------------------------------------------------------------
@@ -135,33 +85,52 @@ async def test_pdf_and_docx_say_exactly_the_same_thing(cpm, document) -> None:
     docx = export_docx(document, A4)
     pdf = export_pdf(document, A4)
 
-    docx_words = " ".join(docx_body_text(docx.content)).split()
-    pdf_words = " ".join(pdf_body_text(pdf.content, cpm.meta.project_name)).split()
-    assert docx_words, "no text was extracted from the DOCX"
+    difference = compare(
+        docx_body_words(docx.content),
+        pdf_body_words(pdf.content, cpm.meta.project_name),
+    )
 
-    matcher = difflib.SequenceMatcher(None, docx_words, pdf_words, autojunk=False)
-    missing: list[str] = []
-    extra: list[str] = []
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag in ("replace", "delete"):
-            missing.extend(docx_words[i1:i2])
-        if tag in ("replace", "insert"):
-            extra.extend(pdf_words[j1:j2])
+    assert difference.missing == [], (
+        f"the PDF is missing text the DOCX has: {difference.missing[:20]}"
+    )
+    assert difference.unexplained == [], (
+        f"the PDF contains text the DOCX does not: {difference.unexplained[:20]}"
+    )
 
-    assert missing == [], f"the PDF is missing text the DOCX has: {missing[:20]}"
-
+    # Raster figures here, so every extra must be a list marker — one per item.
     list_items = sum(
         len(block.items)
         for _, block in walk_blocks(document)
         if isinstance(block, BulletList | NumberedList)
     )
-    assert all(is_list_marker(token) for token in extra), (
-        f"the PDF contains text the DOCX does not: "
-        f"{[t for t in extra if not is_list_marker(t)][:20]}"
+    assert len(difference.markers) == list_items, (
+        f"expected exactly one list marker per list item ({list_items}), "
+        f"got {len(difference.markers)}"
     )
-    assert len(extra) == list_items, (
-        f"expected exactly one list marker per list item ({list_items}), got {len(extra)}"
+
+
+async def test_vector_figure_text_is_explained_not_ignored(cpm) -> None:
+    # The comparison must not be so permissive that a real difference hides
+    # behind "it came from a diagram".
+    svg = (
+        b"<svg xmlns='http://www.w3.org/2000/svg' width='200' height='80'>"
+        b"<text x='10' y='40'>Reservation</text></svg>"
     )
+    assembled = await assemble_srs(
+        cpm, [FigureInput("class", "Class", svg, "image/svg+xml", (("image/png", PNG),))]
+    )
+    docx = export_docx(assembled.document, A4)
+    pdf = export_pdf(assembled.document, A4)
+
+    words = docx_body_words(docx.content)
+    pdf_words = pdf_body_words(pdf.content, cpm.meta.project_name)
+
+    without = compare(words, pdf_words)
+    with_vocabulary = compare(words, pdf_words, figure_vocabulary([svg]))
+
+    assert "Reservation" in without.unexplained
+    assert with_vocabulary.unexplained == []
+    assert "Reservation" in with_vocabulary.from_figures
 
 
 async def test_both_exports_carry_the_same_figures_and_tables(document) -> None:

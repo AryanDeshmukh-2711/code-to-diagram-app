@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 COMPOSE := docker compose
 
-.PHONY: help dev down logs test lint fmt golden types types-check health clean
+.PHONY: help dev down logs test at1 lint fmt golden types types-check health clean
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -22,6 +22,14 @@ test: ## Run api, shared and web test suites
 	$(COMPOSE) run --rm --no-deps api pytest -q tests
 	$(COMPOSE) run --rm --no-deps api pytest -q ../shared/tests
 	$(COMPOSE) run --rm --no-deps web npm run test -- --run
+
+# AT-1 is the acceptance test, not a unit test: it needs the database, the
+# queue, the worker and the diagram engines, so it runs against a live stack.
+at1: ## Run acceptance test AT-1 end to end (SRS 10.1)
+	$(COMPOSE) up -d postgres redis plantuml api worker
+	@# Relative path on purpose: an absolute one gets mangled into a Windows
+	@# path by MSYS before docker ever sees it.
+	$(COMPOSE) exec -T api python ../repo/acceptance/at1.py
 
 golden: ## Regenerate the golden diagram sources, then review the diff
 	$(COMPOSE) run --rm --no-deps api python ../shared/tests/regenerate_golden.py
