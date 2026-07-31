@@ -53,12 +53,12 @@ class ConsistencyReport:
         if self.ok:
             return (
                 f"FR-10 consistency: OK — {self.recognised_names} names checked "
-                f"across {self.checked_diagrams} diagrams."
+                f"across {self.checked_diagrams} sources."
             )
         lines = [
             f"FR-10 consistency FAILED — {len(self.violations)} "
             f"mismatch{'' if len(self.violations) == 1 else 'es'} "
-            f"across {self.checked_diagrams} diagrams:",
+            f"across {self.checked_diagrams} sources:",
         ]
         lines.extend(violation.render() for violation in self.violations)
         return "\n".join(lines)
@@ -87,6 +87,60 @@ def cpm_display_names(cpm: CPM) -> set[str]:
     return names
 
 
+def validate_stale_names(cpm: CPM, diagrams, previous_names) -> ConsistencyReport:
+    """Names a carried-forward figure still shows that the model no longer has.
+
+    `validate_consistency` cannot see this, and the reason is worth stating.
+    It flags a token that *resembles* a CPM name but is spelled differently —
+    "Books" against "Book". A figure left over from before a rename shows
+    "Book" when the model now says "Publication", and those two share no
+    canonical key, so the token looks like any other unrecognised word in the
+    source: a cardinality, a stereotype, a keyword. Guessing at unknown tokens
+    would make the validator a source of false alarms.
+
+    Selective regeneration is the only thing that produces such a set — a full
+    run draws every diagram from one model — so it is checked here, using
+    something the text alone does not carry: which CPM version each artefact
+    was actually drawn from.
+
+    `previous_names` maps a diagram type to the display names of the version it
+    was drawn from, so only names that were once legitimately in the model are
+    reported. A stray word in a source is still ignored.
+    """
+    current = cpm_display_names(cpm)
+    current_keys = {canonical_name_key(name) for name in current}
+
+    violations: list[NameViolation] = []
+    checked = 0
+
+    for diagram in diagrams:
+        source = getattr(diagram, "source", "")
+        was_known = previous_names.get(diagram.diagram_type)
+        if not source or not was_known:
+            continue
+        checked += 1
+
+        for found in extract_names(source, str(diagram.engine)):
+            if found.text in current or canonical_name_key(found.text) in current_keys:
+                continue
+            if found.text not in was_known:
+                continue  # never a model name — not this check's business
+            violations.append(
+                NameViolation(
+                    diagram_type=diagram.diagram_type,
+                    line=found.line,
+                    expected="a name the current model still has",
+                    found=found.text,
+                    context=(
+                        f"{found.context}  <- drawn from an earlier version of "
+                        f"the model; regenerate this diagram too"
+                    ),
+                )
+            )
+
+    return ConsistencyReport(violations=violations, checked_diagrams=checked)
+
+
 def validate_consistency(cpm: CPM, diagrams) -> ConsistencyReport:
     """Check every diagram's source against the CPM's names.
 
@@ -109,9 +163,23 @@ def validate_consistency(cpm: CPM, diagrams) -> ConsistencyReport:
             continue
         checked += 1
 
+        # Spans of candidates that already matched a CPM name exactly. A longer
+        # name swallows the shorter candidates inside it: "Borrow Book" is the
+        # use case, and "Borrow" is not a second reference that happens to be
+        # misspelt. Extractors that emit non-overlapping tokens set no span and
+        # are unaffected.
+        consumed: list[tuple[int, int]] = []
+
         for found in extract_names(source, str(diagram.engine)):
+            if found.span and any(
+                start <= found.span[0] and found.span[1] <= end for start, end in consumed
+            ):
+                continue
+
             if found.text in exact:
                 recognised += 1
+                if found.span:
+                    consumed.append(found.span)
                 continue
 
             candidates = by_key.get(canonical_name_key(found.text))

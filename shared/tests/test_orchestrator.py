@@ -6,17 +6,13 @@ Python — so a fake session factory would assert that the mock behaved like a
 mock. The interesting question is what happens when two writes of the same
 diagram reach the same table, and only the table can answer it.
 
-Everything is created in a throwaway schema so a test run cannot touch
-development data, and so the FR-7 immutability rules on `cpm_versions` (which
-would block cleanup) are not in the way.
+The `session_factory` fixture (conftest) gives each module a throwaway schema.
 """
 
-import os
 from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from cpm.fixtures import load_library_management_system
 from diagrams.mapper import DiagramMapper, InsufficientModelData
@@ -26,14 +22,11 @@ from diagrams.types import RenderFormat
 from generation.orchestrator import RunNotFound, artefacts_of, execute_run
 from store.models import (
     ArtefactStatus,
-    Base,
     CPMVersionRow,
     GenerationRunRow,
     RunStatus,
 )
-from store.session import database_url
 
-SCHEMA = "orchestrator_test"
 SVG = b"<svg xmlns='http://www.w3.org/2000/svg'></svg>"
 
 
@@ -63,32 +56,6 @@ def renderer(ok: bool = True, mappers=None) -> DiagramRenderer:
         engines={"plantuml": factory("plantuml"), "mermaid": factory("mermaid")},
         mappers=mappers,
     )
-
-
-@pytest.fixture
-async def session_factory():
-    """A private schema, dropped afterwards. Skips loudly if there is no
-    database — silently passing would leave the only real proof of idempotency
-    quietly unexercised."""
-    url = os.getenv("TEST_DATABASE_URL", database_url())
-    engine = create_async_engine(url)
-    try:
-        async with engine.begin() as connection:
-            await connection.execute(text(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE"))
-            await connection.execute(text(f"CREATE SCHEMA {SCHEMA}"))
-    except Exception as exc:  # pragma: no cover - environment, not logic
-        await engine.dispose()
-        pytest.skip(f"no Postgres at {url}: {type(exc).__name__}: {exc}")
-
-    scoped = engine.execution_options(schema_translate_map={None: SCHEMA})
-    async with scoped.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
-
-    yield async_sessionmaker(scoped, expire_on_commit=False)
-
-    async with engine.begin() as connection:
-        await connection.execute(text(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE"))
-    await engine.dispose()
 
 
 @pytest.fixture
@@ -186,7 +153,9 @@ async def test_retrying_an_interrupted_run_does_not_duplicate_artefacts(
     assert run.status == RunStatus.SUCCEEDED
 
 
-async def test_the_unique_constraint_is_what_stops_the_duplicate(session_factory, seeded) -> None:
+async def test_the_unique_constraint_is_what_stops_the_duplicate(
+    session_factory, db_schema, seeded
+) -> None:
     # Otherwise the test above could pass because of an accidental id collision
     # rather than the constraint the guarantee is actually resting on.
     async with session_factory() as session:
@@ -195,7 +164,7 @@ async def test_the_unique_constraint_is_what_stops_the_duplicate(session_factory
                 "SELECT conname FROM pg_constraint c "
                 "JOIN pg_class t ON t.oid = c.conrelid "
                 "JOIN pg_namespace n ON n.oid = t.relnamespace "
-                f"WHERE n.nspname = '{SCHEMA}' AND t.relname = 'generation_artefacts' "
+                f"WHERE n.nspname = '{db_schema}' AND t.relname = 'generation_artefacts' "
                 "AND c.contype = 'u'"
             )
         )
@@ -321,7 +290,7 @@ async def test_a_run_pointing_at_a_missing_version_raises(session_factory) -> No
 
 
 async def test_artefacts_are_marked_running_before_any_render_finishes(
-    session_factory, seeded
+    session_factory, db_schema, seeded
 ) -> None:
     # The progress stream is only honest if the rows exist before the work does.
     seen: list[str] = []
@@ -344,5 +313,5 @@ async def test_artefacts_are_marked_running_before_any_render_finishes(
     assert seen and all(status == RunStatus.RUNNING for status in seen)
 
     async with session_factory() as session:
-        rows = await session.scalars(text(f"SELECT status FROM {SCHEMA}.generation_artefacts"))
+        rows = await session.scalars(text(f"SELECT status FROM {db_schema}.generation_artefacts"))
         assert set(rows) == {ArtefactStatus.SUCCEEDED.value}

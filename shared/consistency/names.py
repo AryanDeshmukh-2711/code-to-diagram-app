@@ -23,6 +23,10 @@ class ExtractedName:
     text: str
     line: int
     context: str
+    span: tuple[int, int] | None = None
+    """Character range within the line, when the extractor emits overlapping
+    candidates. Diagram extractors leave it None: their tokens are already
+    delimited, so nothing overlaps."""
 
 
 _QUOTED = re.compile(r'"((?:[^"\\]|\\.)*)"')
@@ -100,9 +104,49 @@ def extract_mermaid(source: str) -> list[ExtractedName]:
     return found
 
 
+PROSE = "prose"
+"""Not a diagram engine. Document prose goes through the same FR-10 check as
+diagram source, so `validate_consistency` needs an extractor for it too."""
+
+_CAPITALISED_PHRASE = re.compile(r"\b[A-Z][A-Za-z0-9]*(?: [A-Z][A-Za-z0-9]*){0,3}\b")
+
+
+def extract_prose(source: str) -> list[ExtractedName]:
+    """Name-shaped phrases in narrative text.
+
+    Only capitalised runs of words are considered, and that restriction is the
+    whole design. English prose legitimately says "the system stores books";
+    flagging that against the entity `Book` would make the check unusable and
+    it would be switched off within a week. Writing "Books" — capitalised, used
+    as the name of the thing — is a different act, and that is the drift worth
+    catching.
+
+    Candidates are emitted longest first, with their spans, so the validator
+    can let a whole name swallow its parts. Without that, the use case
+    "Borrow Book" also offers "Borrow", which resolves to the relationship
+    label "borrows" and gets reported as drift — a false alarm inside a
+    perfectly correct sentence, and the fastest way to get a validator
+    switched off.
+    """
+    found: list[ExtractedName] = []
+
+    for number, line in enumerate(source.splitlines(), start=1):
+        context = line.strip()
+        for match in _CAPITALISED_PHRASE.finditer(line):
+            phrase = match.group(0)
+            words = phrase.split(" ")
+            for size in range(len(words), 0, -1):
+                leading = " ".join(words[:size])
+                start = match.start()
+                found.append(ExtractedName(leading, number, context, (start, start + len(leading))))
+
+    return found
+
+
 _EXTRACTORS = {
     Engine.PLANTUML: extract_plantuml,
     Engine.MERMAID: extract_mermaid,
+    PROSE: extract_prose,
 }
 
 
@@ -115,6 +159,8 @@ class UnsupportedSourceLanguage(RuntimeError):
 
 
 def extract_names(source: str, engine: str) -> list[ExtractedName]:
+    if engine == PROSE:
+        return extract_prose(source)
     try:
         extractor = _EXTRACTORS[Engine(engine)]
     except (KeyError, ValueError):
