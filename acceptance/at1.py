@@ -245,10 +245,15 @@ async def _confirm_over_http(client: httpx.AsyncClient, project_id: str, cpm) ->
     payload = cpm.model_dump(by_alias=True, mode="json")
     seeded = await client.post(
         f"{BASE}/projects/{project_id}/review/seed",
-        json={"projectName": PROJECT_NAME, "draft": payload, "accountId": project_id},
+        json={"projectName": PROJECT_NAME, "draft": payload},
+        headers={"X-Account-Id": project_id},
     )
     seeded.raise_for_status()
-    confirmed = await client.post(f"{BASE}/projects/{project_id}/review/confirm")
+    confirmed = await client.post(
+        f"{BASE}/projects/{project_id}/review/confirm",
+        json={},
+        headers={"X-Account-Id": project_id},
+    )
     confirmed.raise_for_status()
     return confirmed.json()["versionId"]
 
@@ -261,14 +266,18 @@ async def _run(client: httpx.AsyncClient, project_id: str, version_id: str, type
             "cpmVersionId": version_id,
             "diagramTypes": list(types),
             "format": fmt,
-            "accountId": project_id,
         },
+        headers={"X-Account-Id": project_id},
     )
     created.raise_for_status()
     run_id = created.json()["runId"]
     deadline = time.perf_counter() + BUDGET_SECONDS
     while time.perf_counter() < deadline:
-        run = (await client.get(f"{BASE}/runs/{run_id}")).json()
+        run = (
+            await client.get(
+                f"{BASE}/runs/{run_id}", headers={"X-Account-Id": project_id}
+            )
+        ).json()
         if run["status"] in ("succeeded", "failed"):
             return run
         await asyncio.sleep(0.2)

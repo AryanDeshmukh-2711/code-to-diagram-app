@@ -261,3 +261,87 @@ async def test_recording_an_event_never_breaks_the_request(session_factory) -> N
 
     row = await events.record(Broken(), events.SIGNUP, account_id="a")
     assert isinstance(row, EventRow)
+
+
+# --------------------------------------------------------------------------
+# NFR-S2 / NFR-S4, pinned so the fix cannot regress
+# --------------------------------------------------------------------------
+
+
+def test_identity_is_read_in_exactly_one_place() -> None:
+    """No endpoint may take the caller's identity from a request body.
+
+    That was the pre-launch finding: `accountId` arrived in the body, so a
+    caller could name any account and be believed. Identity now enters through
+    one dependency; a body field named like an identity is the regression.
+    """
+    import ast
+    from pathlib import Path
+
+    routers = Path(__file__).resolve().parents[2] / "api" / "app" / "routers"
+    for path in routers.glob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            fields = {
+                target.target.id
+                for target in node.body
+                if isinstance(target, ast.AnnAssign) and isinstance(target.target, ast.Name)
+            }
+            leaked = fields & {"accountId", "account_id", "userId", "user_id"}
+            assert not leaked, f"{path.name}:{node.name} takes identity from the body: {leaked}"
+
+
+def test_every_run_and_project_route_proves_ownership() -> None:
+    import ast
+    from pathlib import Path
+
+    routers = Path(__file__).resolve().parents[2] / "api" / "app" / "routers"
+    unguarded = []
+    for name in ("runs.py", "review.py", "exports.py"):
+        source = (routers / name).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.AsyncFunctionDef):
+                continue
+            decorated = any(
+                isinstance(d, ast.Call) and getattr(d.func, "attr", "") in {"get", "post"}
+                for d in node.decorator_list
+            )
+            if not decorated or node.name in {"download_artefact", "dashboard", "metrics_json"}:
+                continue
+            body = ast.unparse(node)
+            if "require_account" not in ast.unparse(node.args):
+                unguarded.append(f"{name}:{node.name} has no identity")
+            elif not any(
+                helper in body for helper in ("owned_run", "owned_project", "_load", "check_new")
+            ):
+                unguarded.append(f"{name}:{node.name} never checks ownership")
+    assert not unguarded, "\n".join(unguarded)
+
+
+def test_a_signed_link_is_scoped_to_one_artefact_and_expires() -> None:
+    import sys
+
+    sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2] / "api"))
+    import os
+
+    os.environ.setdefault("ASA_SIGNING_SECRET", "test-secret")
+    import importlib
+
+    identity = importlib.import_module("app.core.identity")
+    identity.SECRET = b"test-secret"
+
+    token = identity.sign("artefact-a", ttl_seconds=60)
+    identity.verify("artefact-a", token)
+
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as wrong_artefact:
+        identity.verify("artefact-b", token)
+    assert wrong_artefact.value.status_code == 403
+
+    with pytest.raises(HTTPException) as expired:
+        identity.verify("artefact-a", identity.sign("artefact-a", ttl_seconds=-1))
+    assert "expired" in expired.value.detail

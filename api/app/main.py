@@ -40,6 +40,7 @@ def create_app() -> FastAPI:
     app.include_router(review.router)
     app.include_router(runs.router)
     app.include_router(exports.router)
+    app.include_router(exports.artefact_router)
     app.include_router(exports.metrics_router)
     return app
 

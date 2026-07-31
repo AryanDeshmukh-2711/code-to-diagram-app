@@ -13,7 +13,7 @@ from typing import Any
 from analytics import events
 from billing.quota import QuotaExceeded, check_export
 from cpm.schema import CPM
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -32,6 +32,7 @@ from srs.template.apply import (
 from store.models import CPMVersionRow, GenerationArtefactRow, GenerationRunRow
 from store.session import SessionFactory
 
+from app.core.identity import owned_run, require_account, sign, verify
 from app.core.quota import as_http
 
 router = APIRouter(prefix="/runs", tags=["exports"])
@@ -46,12 +47,13 @@ MIME_OF_FORMAT = {"svg": "image/svg+xml", "png": "image/png"}
 class ExportIn(BaseModel):
     format: str = "pdf"
     templateId: str = "ieee-830-plain"
-    accountId: str = "anonymous"
     fields: dict[str, str] = Field(default_factory=dict)
 
 
 @router.post("/{run_id}/export")
-async def export_run(run_id: str, body: ExportIn) -> Response:
+async def export_run(
+    run_id: str, body: ExportIn, account: str = Depends(require_account)
+) -> Response:
     if body.format not in MEDIA:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
@@ -60,13 +62,11 @@ async def export_run(run_id: str, body: ExportIn) -> Response:
 
     async with SessionFactory() as session:
         try:
-            tier = await check_export(session, body.accountId, body.format)
+            tier = await check_export(session, account, body.format)
         except QuotaExceeded as exc:
             raise as_http(exc) from None
 
-        run = await session.get(GenerationRunRow, run_id)
-        if run is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"no run {run_id!r}")
+        run = await owned_run(session, run_id, account)
         if run.status != "succeeded":
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
@@ -154,7 +154,7 @@ async def export_run(run_id: str, body: ExportIn) -> Response:
         await events.record(
             session,
             events.EXPORT_COMPLETED,
-            account_id=body.accountId,
+            account_id=account,
             project_id=run.project_id,
             run_id=run_id,
             tier=tier.id,
@@ -201,3 +201,59 @@ async def metrics_json(days: int = 30) -> dict[str, Any]:
     from analytics.metrics import collect
 
     return asdict(await collect(days))
+
+
+@router.get("/{run_id}/artefacts")
+async def artefact_links(run_id: str, account: str = Depends(require_account)) -> dict[str, Any]:
+    """Signed, expiring links to this run's diagrams (NFR-S4).
+
+    The link is minted per artefact and carries its own deadline. A link that
+    ends up in a shared screenshot stops working; a link edited to point at a
+    different artefact fails its signature.
+    """
+    async with SessionFactory() as session:
+        await owned_run(session, run_id, account)
+        rows = list(
+            await session.scalars(
+                select(GenerationArtefactRow).where(GenerationArtefactRow.run_id == run_id)
+            )
+        )
+    return {
+        "runId": run_id,
+        "artefacts": [
+            {
+                "diagramType": row.diagram_type,
+                "format": row.format,
+                "bytes": len(row.content) if row.content else 0,
+                "url": f"/artefacts/{row.id}?token={sign(row.id)}",
+            }
+            for row in rows
+            if row.status == "succeeded" and row.content
+        ],
+    }
+
+
+artefact_router = APIRouter(tags=["exports"])
+
+
+@artefact_router.get("/artefacts/{artefact_id}")
+async def download_artefact(artefact_id: str, token: str) -> Response:
+    """Serve one diagram to a signed link, and to nothing else.
+
+    Deliberately not behind the account header as well: the signature *is* the
+    authorisation, which is what lets a link be embedded in a document or
+    opened in a new tab. It is scoped to one artefact and it expires.
+    """
+    verify(artefact_id, token)
+
+    async with SessionFactory() as session:
+        row = await session.get(GenerationArtefactRow, artefact_id)
+    if row is None or not row.content:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="no such artefact")
+
+    media = {"svg": "image/svg+xml", "png": "image/png"}.get(row.format, "application/octet-stream")
+    return Response(
+        content=row.content,
+        media_type=media,
+        headers={"Cache-Control": "private, max-age=300"},
+    )

@@ -69,6 +69,7 @@ services:
     environment:
       APP_ENV: ${APP_ENV:-local}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ASA_SIGNING_SECRET: ${ASA_SIGNING_SECRET:-dev-only-not-a-secret-change-me}
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://asa:asa@postgres:5432/asa}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       PLANTUML_SERVER_URL: ${PLANTUML_SERVER_URL:-http://plantuml:8080}
@@ -112,6 +113,7 @@ services:
     environment:
       APP_ENV: ${APP_ENV:-local}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ASA_SIGNING_SECRET: ${ASA_SIGNING_SECRET:-dev-only-not-a-secret-change-me}
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://asa:asa@postgres:5432/asa}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       PLANTUML_SERVER_URL: ${PLANTUML_SERVER_URL:-http://plantuml:8080}
@@ -141,6 +143,7 @@ services:
       ARQ_QUEUE: arq:priority
       APP_ENV: ${APP_ENV:-local}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ASA_SIGNING_SECRET: ${ASA_SIGNING_SECRET:-dev-only-not-a-secret-change-me}
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://asa:asa@postgres:5432/asa}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       PLANTUML_SERVER_URL: ${PLANTUML_SERVER_URL:-http://plantuml:8080}

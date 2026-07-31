@@ -16,7 +16,7 @@ from analytics.review_signals import ReviewSignals
 from billing.quota import QuotaExceeded, check_new_project
 from cpm.fixtures import library_management_system_payload
 from cpm.schema import CPMDraft
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from review import (
     ReviewError,
@@ -42,6 +42,7 @@ from sqlalchemy import func, select
 from store.models import AccountRow, CPMDraftRow, CPMVersionRow, ProjectRow
 from store.session import SessionFactory
 
+from app.core.identity import owned_project, require_account
 from app.core.quota import as_http
 
 router = APIRouter(prefix="/projects/{project_id}/review", tags=["review"])
@@ -69,10 +70,6 @@ class ReviewOut(BaseModel):
 class SeedIn(BaseModel):
     projectName: str = "Library Management System"
     draft: dict[str, Any] | None = None
-    accountId: str = "anonymous"
-    """Whose quota this counts against. A real deployment takes it from the
-    session; taking it from the body here keeps the enforcement testable
-    without inventing an auth system this milestone does not have."""
 
 
 class EditIn(BaseModel):
@@ -141,7 +138,9 @@ def _present(
     )
 
 
-async def _load(session, project_id: str) -> CPMDraftRow:
+async def _load(session, project_id: str, account: str) -> CPMDraftRow:
+    # One place, so no endpoint can read a draft without proving ownership.
+    await owned_project(session, project_id, account)
     row = await session.get(CPMDraftRow, project_id)
     if row is None:
         raise HTTPException(
@@ -152,7 +151,7 @@ async def _load(session, project_id: str) -> CPMDraftRow:
 
 
 @router.post("/seed", response_model=ReviewOut)
-async def seed(project_id: str, body: SeedIn) -> ReviewOut:
+async def seed(project_id: str, body: SeedIn, account: str = Depends(require_account)) -> ReviewOut:
     """Put a model into review.
 
     With no body this loads the sample project, which is how the screen is
@@ -170,18 +169,16 @@ async def seed(project_id: str, body: SeedIn) -> ReviewOut:
             project = await session.get(ProjectRow, project_id)
             if project is None:
                 try:
-                    await check_new_project(session, body.accountId)
+                    await check_new_project(session, account)
                 except QuotaExceeded as exc:
                     raise as_http(exc) from None
-                if await session.get(AccountRow, body.accountId) is None:
-                    session.add(AccountRow(id=body.accountId))
-                session.add(
-                    ProjectRow(id=project_id, account_id=body.accountId, name=body.projectName)
-                )
+                if await session.get(AccountRow, account) is None:
+                    session.add(AccountRow(id=account))
+                session.add(ProjectRow(id=project_id, account_id=account, name=body.projectName))
                 await events.record(
                     session,
                     events.PROJECT_CREATED,
-                    account_id=body.accountId,
+                    account_id=account,
                     project_id=project_id,
                     payload={"projectName": body.projectName},
                 )
@@ -194,16 +191,16 @@ async def seed(project_id: str, body: SeedIn) -> ReviewOut:
 
 
 @router.get("", response_model=ReviewOut)
-async def get_review(project_id: str) -> ReviewOut:
+async def get_review(project_id: str, account: str = Depends(require_account)) -> ReviewOut:
     async with SessionFactory() as session:
-        row = await _load(session, project_id)
+        row = await _load(session, project_id, account)
         return _present(row, CPMDraft.model_validate(row.payload))
 
 
 @router.post("/edit", response_model=ReviewOut)
-async def edit(project_id: str, body: EditIn) -> ReviewOut:
+async def edit(project_id: str, body: EditIn, account: str = Depends(require_account)) -> ReviewOut:
     async with SessionFactory() as session:
-        row = await _load(session, project_id)
+        row = await _load(session, project_id, account)
         draft = CPMDraft.model_validate(row.payload)
 
         try:
@@ -274,7 +271,6 @@ class ConfirmIn(BaseModel):
     to the decision cannot be half-delivered by a closing tab.
     """
 
-    accountId: str = "anonymous"
     editsTotal: int = 0
     editsByOp: dict[str, int] = Field(default_factory=dict)
     editsReverted: int = 0
@@ -300,10 +296,14 @@ def _reviewable_items(draft) -> int:
 
 
 @router.post("/confirm", response_model=ConfirmOut)
-async def confirm(project_id: str, body: ConfirmIn | None = None) -> ConfirmOut:
+async def confirm(
+    project_id: str,
+    body: ConfirmIn | None = None,
+    account: str = Depends(require_account),
+) -> ConfirmOut:
     """The gate (FR-6). Writes an immutable version (FR-7)."""
     async with SessionFactory() as session:
-        row = await _load(session, project_id)
+        row = await _load(session, project_id, account)
         draft = CPMDraft.model_validate(row.payload)
 
         try:
@@ -343,7 +343,7 @@ async def confirm(project_id: str, body: ConfirmIn | None = None) -> ConfirmOut:
         await events.record(
             session,
             events.CPM_CONFIRMED,
-            account_id=(body.accountId if body else None),
+            account_id=(account if body else None),
             project_id=project_id,
             payload={**signals.as_payload(), "cpmVersionId": stored.id, "version": version},
         )
