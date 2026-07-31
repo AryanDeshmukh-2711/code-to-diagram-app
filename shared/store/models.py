@@ -42,6 +42,16 @@ class RunStatus(StrEnum):
     FAILED = "failed"
 
 
+class RunKind(StrEnum):
+    FULL = "full"
+    REGENERATION = "regeneration"
+    """FR-12. A regeneration is a run in its own right rather than an edit of
+    the previous one: it renders one diagram, carries the rest forward, and
+    ends up a complete artefact set. That keeps "export a run" meaning the same
+    thing for both kinds, and keeps the old set intact so a user can see what
+    was regenerated and when."""
+
+
 class ArtefactStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
@@ -91,7 +101,15 @@ class GenerationRunRow(Base):
     cpm_version_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     template_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default=RunKind.FULL)
+    parent_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    """Set on a regeneration. Walking it back gives the lineage of a set —
+    which diagram was redrawn, when, and what it was redrawn from."""
+
     requested_types: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    """What this run actually rendered. On a regeneration that is the single
+    diagram; the rest of the set is carried forward from the parent."""
+
     fmt: Mapped[str] = mapped_column(String(8), nullable=False, default="svg")
 
     status: Mapped[str] = mapped_column(String(16), nullable=False, default=RunStatus.PENDING)
@@ -128,6 +146,17 @@ class GenerationArtefactRow(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False, default=ArtefactStatus.PENDING)
     title: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     engine: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    cpm_version_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    """Which model this figure actually depicts. After a regeneration against a
+    newer version, the carried-forward artefacts still name their own — so
+    "this diagram is from an older model" is a recorded fact rather than an
+    inference."""
+
+    origin_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    """The run that rendered these bytes. Differs from `run_id` on a carried-
+    forward artefact, which is what makes "only this one was regenerated"
+    visible in the artefact list rather than only in the run row."""
 
     source: Mapped[str | None] = mapped_column(Text, nullable=True)
     content: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)

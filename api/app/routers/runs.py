@@ -15,8 +15,15 @@ from arq import create_pool
 from arq.connections import RedisSettings
 from diagrams.registry import registered_types
 from diagrams.types import RenderFormat
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Response, status
 from fastapi.responses import StreamingResponse
+from generation.orchestrator import RunNotFound
+from generation.regenerate import (
+    NotRegenerable,
+    create_regeneration_run,
+    lineage,
+    plan_regeneration,
+)
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from store.models import (
@@ -52,6 +59,12 @@ class ArtefactOut(BaseModel):
     error: str | None = None
     attempts: int = 0
     bytes: int | None = None
+    cpmVersionId: str | None = None
+    originRunId: str | None = None
+    carriedForward: bool = False
+    """True when this figure was drawn by an earlier run. The whole point of
+    FR-12 is that most of the set is untouched, and the artefact list should
+    show that rather than implying eight fresh renders."""
 
 
 class RunOut(BaseModel):
@@ -59,12 +72,42 @@ class RunOut(BaseModel):
     projectId: str
     cpmVersionId: str
     status: str
+    kind: str = "full"
+    parentRunId: str | None = None
     requestedTypes: list[str]
     artefacts: list[ArtefactOut]
     durationMs: int | None = None
     llmCostUsd: str | None = None
     attempts: int = 0
     error: str | None = None
+
+
+class RegenerateIn(BaseModel):
+    diagramType: str
+    cpmVersionId: str | None = None
+    """Defaults to the run's own version. Naming a newer confirmed version is
+    the "I edited the model" case; either way it is a version a human already
+    confirmed, never a fresh extraction."""
+
+
+class RegenerateOut(BaseModel):
+    changed: bool
+    reason: str
+    diagramType: str
+    cpmVersionId: str
+    runId: str | None = None
+    previousStatus: str | None = None
+    staleTypes: list[str] = Field(default_factory=list)
+
+
+class LineageEntry(BaseModel):
+    runId: str
+    kind: str
+    status: str
+    regenerated: list[str]
+    cpmVersionId: str
+    createdAt: str | None = None
+    completedAt: str | None = None
 
 
 async def _snapshot(session, run: GenerationRunRow) -> RunOut:
@@ -78,6 +121,8 @@ async def _snapshot(session, run: GenerationRunRow) -> RunOut:
         projectId=run.project_id,
         cpmVersionId=run.cpm_version_id,
         status=run.status,
+        kind=run.kind,
+        parentRunId=run.parent_run_id,
         requestedTypes=list(run.requested_types),
         durationMs=run.duration_ms,
         llmCostUsd=run.llm_cost_usd,
@@ -92,6 +137,9 @@ async def _snapshot(session, run: GenerationRunRow) -> RunOut:
                 error=row.error,
                 attempts=row.attempts,
                 bytes=len(row.content) if row.content else None,
+                cpmVersionId=row.cpm_version_id,
+                originRunId=row.origin_run_id,
+                carriedForward=bool(row.origin_run_id and row.origin_run_id != run.id),
             )
             for row in rows
         ],
@@ -155,6 +203,73 @@ async def get_run(run_id: str) -> RunOut:
         if run is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"no run {run_id!r}")
         return await _snapshot(session, run)
+
+
+@router.post("/{run_id}/regenerate", response_model=RegenerateOut)
+async def regenerate(run_id: str, body: RegenerateIn, response: Response) -> RegenerateOut:
+    """FR-12: redraw one diagram from an already-confirmed model.
+
+    Answers synchronously when there is nothing to do, and only then. Deciding
+    costs one mapper call — a pure function over a CPM already in hand, no
+    network, well under a millisecond — so telling the user "your model has not
+    changed" does not need a job, a queue or a spinner. Everything that renders
+    still runs in the worker (C-4).
+    """
+    try:
+        plan = await plan_regeneration(run_id, body.diagramType, body.cpmVersionId)
+    except RunNotFound as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from None
+    except NotRegenerable as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+    except KeyError as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, detail=f"unknown diagram type: {exc}"
+        ) from None
+
+    out = RegenerateOut(
+        changed=plan.changed,
+        reason=plan.reason,
+        diagramType=plan.diagram_type,
+        cpmVersionId=plan.cpm_version_id,
+        previousStatus=plan.previous_status,
+        staleTypes=plan.stale_types,
+    )
+    if not plan.changed:
+        # 200, not 202: nothing was accepted for processing, and no run row is
+        # written. A history of non-events would make the history useless.
+        response.status_code = status.HTTP_200_OK
+        return out
+
+    child_id = await create_regeneration_run(plan, template_id=None)
+    pool = await create_pool(RedisSettings.from_dsn(get_settings().redis_url))
+    try:
+        await pool.enqueue_job("regenerate_diagram", child_id, _job_id=f"regen:{child_id}")
+    finally:
+        await pool.aclose()
+
+    out.runId = child_id
+    response.status_code = status.HTTP_202_ACCEPTED
+    return out
+
+
+@router.get("/{run_id}/history", response_model=list[LineageEntry])
+async def history(run_id: str) -> list[LineageEntry]:
+    """What was regenerated, and when — oldest first."""
+    chain = await lineage(run_id)
+    if not chain:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"no run {run_id!r}")
+    return [
+        LineageEntry(
+            runId=run.id,
+            kind=run.kind,
+            status=run.status,
+            regenerated=list(run.requested_types),
+            cpmVersionId=run.cpm_version_id,
+            createdAt=run.created_at.isoformat() if run.created_at else None,
+            completedAt=run.completed_at.isoformat() if run.completed_at else None,
+        )
+        for run in chain
+    ]
 
 
 @router.get("/{run_id}/events")

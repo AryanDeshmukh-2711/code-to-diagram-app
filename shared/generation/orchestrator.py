@@ -58,17 +58,43 @@ class RunOutcome:
     error: str | None = None
 
 
-def _artefact_id(run_id: str, diagram_type: str, fmt: str) -> str:
+def artefact_id(run_id: str, diagram_type: str, fmt: str) -> str:
     return f"{run_id}:{diagram_type}:{fmt}"
 
 
-def _status_of(result: DiagramResult) -> str:
+def status_of(result: DiagramResult) -> str:
     if isinstance(result, SkippedDiagram):
         return ArtefactStatus.SKIPPED
     return ArtefactStatus.SUCCEEDED if result.ok else ArtefactStatus.FAILED
 
 
-async def _upsert_artefact(session, run_id: str, fmt: str, values: dict) -> None:
+def artefact_values(
+    run_id: str,
+    fmt: str,
+    result: DiagramResult,
+    cpm_version_id: str,
+    origin_run_id: str,
+) -> dict:
+    """One rendered result as a row. Shared with regeneration so both paths
+    record provenance the same way."""
+    return {
+        "id": artefact_id(run_id, result.diagram_type, fmt),
+        "run_id": run_id,
+        "diagram_type": result.diagram_type,
+        "format": fmt,
+        "status": status_of(result),
+        "title": result.title,
+        "engine": getattr(result, "engine", None),
+        "source": getattr(result, "source", None) or None,
+        "content": getattr(result, "content", None),
+        "error": getattr(result, "error", None) or getattr(result, "reason", None),
+        "attempts": getattr(result, "attempts", 0),
+        "cpm_version_id": cpm_version_id,
+        "origin_run_id": origin_run_id,
+    }
+
+
+async def upsert_artefact(session, run_id: str, fmt: str, values: dict) -> None:
     """Insert or overwrite one artefact row.
 
     ON CONFLICT against uq_run_artefact is what makes a retry safe. Without it
@@ -86,6 +112,41 @@ async def _upsert_artefact(session, run_id: str, fmt: str, values: dict) -> None
             },
         )
     )
+
+
+async def finalise_run(
+    run_id: str,
+    status: str,
+    error: str | None,
+    started: datetime,
+    sink: RecordingSink | None,
+    session_factory,
+) -> tuple[int, Decimal | None]:
+    """Close out a run: status, duration, cost. Shared by both run kinds.
+
+    `sink` may be None for a path that cannot make model calls at all, which
+    still records a measured zero rather than an absent number.
+    """
+    completed = datetime.now(UTC)
+    duration_ms = int((completed - started).total_seconds() * 1000)
+
+    sink = sink or RecordingSink()
+    total_cost = sink.total_cost_usd
+
+    async with session_factory() as session:
+        run = await session.get(GenerationRunRow, run_id)
+        run.status = status
+        run.error = error
+        run.completed_at = completed
+        run.duration_ms = duration_ms
+        # A run with no model calls costs exactly zero, which is a measurement
+        # rather than a gap — C-3 keeps the LLM out of the render path.
+        run.llm_cost_usd = None if total_cost is None else str(Decimal(total_cost))
+        run.llm_input_tokens = sum(record.input_tokens for record in sink.records)
+        run.llm_output_tokens = sum(record.output_tokens for record in sink.records)
+        await session.commit()
+
+    return duration_ms, total_cost
 
 
 async def execute_run(
@@ -129,18 +190,21 @@ async def execute_run(
         run.attempts += 1
         run.error = None
 
+        version_id = run.cpm_version_id
         for diagram_type in requested:
-            await _upsert_artefact(
+            await upsert_artefact(
                 session,
                 run_id,
                 fmt.value,
                 {
-                    "id": _artefact_id(run_id, diagram_type, fmt.value),
+                    "id": artefact_id(run_id, diagram_type, fmt.value),
                     "run_id": run_id,
                     "diagram_type": diagram_type,
                     "format": fmt.value,
                     "status": ArtefactStatus.RUNNING,
                     "error": None,
+                    "cpm_version_id": version_id,
+                    "origin_run_id": run_id,
                 },
             )
         await session.commit()
@@ -149,23 +213,11 @@ async def execute_run(
         # Each diagram lands as it finishes, so the client sees progress rather
         # than a single jump at the end.
         async with session_factory() as progress_session:
-            await _upsert_artefact(
+            await upsert_artefact(
                 progress_session,
                 run_id,
                 fmt.value,
-                {
-                    "id": _artefact_id(run_id, result.diagram_type, fmt.value),
-                    "run_id": run_id,
-                    "diagram_type": result.diagram_type,
-                    "format": fmt.value,
-                    "status": _status_of(result),
-                    "title": result.title,
-                    "engine": getattr(result, "engine", None),
-                    "source": getattr(result, "source", None) or None,
-                    "content": getattr(result, "content", None),
-                    "error": getattr(result, "error", None) or getattr(result, "reason", None),
-                    "attempts": getattr(result, "attempts", 0),
-                },
+                artefact_values(run_id, fmt.value, result, version_id, run_id),
             )
             await progress_session.commit()
 
@@ -192,25 +244,9 @@ async def execute_run(
             "skipped": len(result.skipped),
         }
 
-    completed = datetime.now(UTC)
-    duration_ms = int((completed - started).total_seconds() * 1000)
-
-    total_cost = sink.total_cost_usd
-    input_tokens = sum(record.input_tokens for record in sink.records)
-    output_tokens = sum(record.output_tokens for record in sink.records)
-
-    async with session_factory() as session:
-        run = await session.get(GenerationRunRow, run_id)
-        run.status = status
-        run.error = error
-        run.completed_at = completed
-        run.duration_ms = duration_ms
-        # A run with no model calls costs exactly zero, which is a measurement
-        # rather than a gap — C-3 keeps the LLM out of the render path.
-        run.llm_cost_usd = None if total_cost is None else str(Decimal(total_cost))
-        run.llm_input_tokens = input_tokens
-        run.llm_output_tokens = output_tokens
-        await session.commit()
+    duration_ms, total_cost = await finalise_run(
+        run_id, status, error, started, sink, session_factory
+    )
 
     return RunOutcome(
         run_id=run_id,
