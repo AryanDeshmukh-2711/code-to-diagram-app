@@ -9,6 +9,7 @@ What is being asserted, in order of how much it would cost to get wrong:
 """
 
 import copy
+import inspect
 
 import pytest
 
@@ -341,3 +342,33 @@ async def test_building_and_numbering_are_separable(cpm) -> None:
     finished = number(raw)
     assert all(s.number for s in walk_sections(finished))
     assert finished.numbered
+
+
+def test_the_validator_is_not_reachable_only_conditionally() -> None:
+    """The FR-10 guard the pre-launch review found missing on this path.
+
+    `run.py` and `regenerate.py` each had one; assembly did not, so the SRS was
+    the one place where a `if settings.strict:` could have appeared without a
+    test noticing.
+    """
+    import ast
+    from pathlib import Path
+
+    import srs.assemble as module
+
+    tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+
+    def calls_validate(node) -> bool:
+        return any(
+            isinstance(inner, ast.Call)
+            and isinstance(inner.func, ast.Name)
+            and inner.func.id == "validate_consistency"
+            for inner in ast.walk(node)
+        )
+
+    assert calls_validate(tree), "assembly never validates"
+    guarded = [n for n in ast.walk(tree) if isinstance(n, ast.If) and calls_validate(n)]
+    assert not guarded, "validate_consistency is reachable only conditionally"
+
+    names = set(inspect.signature(assemble_srs).parameters)
+    assert not {n for n in names if "skip" in n or "strict" in n or "validate" in n}, names

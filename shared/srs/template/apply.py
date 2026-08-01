@@ -193,7 +193,7 @@ def _block_to_ast(block: Block, values: dict[str, str], inputs: TemplateInputs):
     if block.kind == "table":
         return [
             Table(
-                table_id=f"front-{abs(hash(block.columns)) % 10**8}",
+                table_id=_stable_id("front", block.columns),
                 caption="",
                 columns=tuple(block.columns),
                 rows=tuple(tuple(_fill(cell, values) for cell in row) for row in block.rows),
@@ -202,6 +202,19 @@ def _block_to_ast(block: Block, values: dict[str, str], inputs: TemplateInputs):
             )
         ]
     raise ValueError(f"unhandled template block kind {block.kind!r}")
+
+
+def _stable_id(prefix: str, parts) -> str:
+    """An id that survives a restart.
+
+    Python randomises string hashing per process, so hash() here produced a
+    different table id on every boot — identical input, different document
+    (FR-9). A digest of the content does not.
+    """
+    import hashlib
+
+    digest = hashlib.sha256("|".join(parts).encode()).hexdigest()[:10]
+    return f"{prefix}-{digest}"
 
 
 def _index_to_ast(item: FrontIndex):

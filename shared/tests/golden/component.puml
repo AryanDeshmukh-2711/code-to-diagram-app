@@ -1,0 +1,36 @@
+@startuml
+!theme plain
+skinparam shadowing false
+skinparam componentStyle rectangle
+
+component "Web Client" as comp_web_client <<ui>>
+component "API Gateway" as comp_api_gateway <<service>>
+component "Catalogue Service" as comp_catalogue_service <<service>>
+component "Lending Service" as comp_lending_service <<service>>
+component "Notification Service" as comp_notification_service <<service>>
+component "Library Database" as comp_library_database <<database>>
+
+interface "BrowserUI" as iface_BrowserUI
+interface "CatalogueAPI" as iface_CatalogueAPI
+interface "LendingAPI" as iface_LendingAPI
+interface "CatalogueService" as iface_CatalogueService
+interface "LendingService" as iface_LendingService
+interface "LibraryDatabase" as iface_LibraryDatabase
+interface "NotificationService" as iface_NotificationService
+
+comp_web_client -- iface_BrowserUI
+comp_api_gateway -- iface_CatalogueAPI
+comp_api_gateway -- iface_LendingAPI
+comp_catalogue_service -- iface_CatalogueService
+comp_lending_service -- iface_LendingService
+comp_notification_service -- iface_NotificationService
+comp_library_database -- iface_LibraryDatabase
+comp_web_client ..> iface_CatalogueAPI : uses
+comp_web_client ..> iface_LendingAPI : uses
+comp_api_gateway ..> iface_CatalogueService : uses
+comp_api_gateway ..> iface_LendingService : uses
+comp_catalogue_service ..> iface_LibraryDatabase : uses
+comp_lending_service ..> iface_LibraryDatabase : uses
+comp_lending_service ..> iface_NotificationService : uses
+
+@enduml

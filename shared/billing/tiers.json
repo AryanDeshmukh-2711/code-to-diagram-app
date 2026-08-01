@@ -1,0 +1,51 @@
+{
+  "_comment": "PRD section 10. These numbers are hypotheses, not facts — they are here so they can be changed without a deploy, and so the margin query can tell you which of them are wrong.",
+  "currency": "USD",
+  "tiers": [
+    {
+      "id": "free",
+      "name": "Free",
+      "monthly_price": "0.00",
+      "rank": 0,
+      "max_projects": 2,
+      "max_runs_per_month": 20,
+      "watermark": true,
+      "exports": ["pdf"],
+      "diagram_formats": ["png"],
+      "custom_template": false,
+      "templates": ["ieee-830-plain"],
+      "queue": "default",
+      "upgrade_to": "student"
+    },
+    {
+      "id": "student",
+      "name": "Student",
+      "monthly_price": "5.00",
+      "rank": 1,
+      "max_projects": null,
+      "max_runs_per_month": 300,
+      "watermark": false,
+      "exports": ["pdf", "docx"],
+      "diagram_formats": ["png", "svg"],
+      "custom_template": true,
+      "templates": [],
+      "queue": "default",
+      "upgrade_to": "pro"
+    },
+    {
+      "id": "pro",
+      "name": "Pro",
+      "monthly_price": "15.00",
+      "rank": 2,
+      "max_projects": null,
+      "max_runs_per_month": null,
+      "watermark": false,
+      "exports": ["pdf", "docx"],
+      "diagram_formats": ["png", "svg"],
+      "custom_template": true,
+      "templates": [],
+      "queue": "priority",
+      "upgrade_to": null
+    }
+  ]
+}

@@ -44,6 +44,13 @@ RECORDING = FIXTURES / "recorded_model_output.json"
 PROJECT_NAME = "Library Management System"
 AUTHOR = "A. V. Deshmukh"
 
+ACCOUNT_TIER = "pro"
+"""AT-1 exercises the whole product, so it runs on a plan entitled to all of
+it. On the free tier the SVG run is refused with a 402 — correctly, and that
+refusal is covered by the quota tests rather than here. An acceptance test that
+quietly ran on whatever plan happened to be the default would start failing for
+billing reasons and read as a rendering bug."""
+
 V1_DIAGRAMS = (
     "class",
     "use_case",
@@ -222,20 +229,48 @@ async def _model_reachable() -> bool:
         return False
 
 
-async def _confirm_over_http(client: httpx.AsyncClient, project_id: str, cpm) -> str:
+async def _entitled_session(client: httpx.AsyncClient) -> tuple[str, dict[str, str]]:
+    """Register, sign in, and return the account id with its auth header.
+
+    Through the real endpoints: AT-1 exercises the product a user would meet,
+    and an account inserted straight into the database would skip the one thing
+    standing between a stranger and somebody's coursework.
+    """
+    registered = await client.post(f"{BASE}/auth/register", json={"tier": ACCOUNT_TIER})
+    registered.raise_for_status()
+    account = registered.json()
+
+    session = await client.post(
+        f"{BASE}/auth/token",
+        json={"accountId": account["accountId"], "apiKey": account["apiKey"]},
+    )
+    session.raise_for_status()
+    return account["accountId"], {"Authorization": f"Bearer {session.json()['token']}"}
+
+
+async def _confirm_over_http(
+    client: httpx.AsyncClient, project_id: str, cpm, auth: dict[str, str]
+) -> str:
     """Through the review gate (FR-6), over HTTP, exactly as a user would."""
     payload = cpm.model_dump(by_alias=True, mode="json")
     seeded = await client.post(
         f"{BASE}/projects/{project_id}/review/seed",
         json={"projectName": PROJECT_NAME, "draft": payload},
+        headers=auth,
     )
     seeded.raise_for_status()
-    confirmed = await client.post(f"{BASE}/projects/{project_id}/review/confirm")
+    confirmed = await client.post(
+        f"{BASE}/projects/{project_id}/review/confirm",
+        json={},
+        headers=auth,
+    )
     confirmed.raise_for_status()
     return confirmed.json()["versionId"]
 
 
-async def _run(client: httpx.AsyncClient, project_id: str, version_id: str, types, fmt: str):
+async def _run(
+    client: httpx.AsyncClient, project_id: str, version_id: str, types, fmt: str, auth: dict
+):
     created = await client.post(
         f"{BASE}/runs",
         json={
@@ -244,12 +279,15 @@ async def _run(client: httpx.AsyncClient, project_id: str, version_id: str, type
             "diagramTypes": list(types),
             "format": fmt,
         },
+        headers=auth,
     )
     created.raise_for_status()
     run_id = created.json()["runId"]
     deadline = time.perf_counter() + BUDGET_SECONDS
     while time.perf_counter() < deadline:
-        run = (await client.get(f"{BASE}/runs/{run_id}")).json()
+        run = (
+            await client.get(f"{BASE}/runs/{run_id}", headers=auth)
+        ).json()
         if run["status"] in ("succeeded", "failed"):
             return run
         await asyncio.sleep(0.2)
@@ -323,9 +361,13 @@ async def run_at1() -> Report:
 
     project_id = f"at1_{int(time.time())}"
     async with httpx.AsyncClient(timeout=BUDGET_SECONDS) as client:
-        version_id = await _confirm_over_http(client, project_id, cpm)
-        svg_run = await _run(client, project_id, version_id, available, "svg")
-        png_run = await _run(client, project_id, version_id, available, "png")
+        account, auth = await _entitled_session(client)
+        report.notes.append(
+            f"account     {account} on the {ACCOUNT_TIER} plan, signed in (FR-22)"
+        )
+        version_id = await _confirm_over_http(client, project_id, cpm, auth)
+        svg_run = await _run(client, project_id, version_id, available, "svg", auth)
+        png_run = await _run(client, project_id, version_id, available, "png", auth)
 
     async with SessionFactory() as session:
         artefacts: dict[str, dict[str, tuple[str, bytes, str]]] = {}

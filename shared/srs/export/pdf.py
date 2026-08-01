@@ -500,12 +500,23 @@ def _figure_flowable(block: Figure, template: DocumentTemplate, counters: dict) 
         )
     mime, payload = chosen
     available = template.content_width_mm * mm
+    # A figure has to fit the page in both directions. Scaling to the width
+    # alone is fine until a mapper produces something tall — an activity
+    # diagram with six use cases is metres long — and then ReportLab refuses
+    # the whole document with a LayoutError rather than shrinking it.
+    available_height = (
+        template.page_height_mm - template.margins.top_mm - template.margins.bottom_mm
+    ) * mm - CAPTION_ALLOWANCE
 
     if mime == "image/svg+xml":
         drawing = _svg_drawing(payload)
         if drawing is not None:
             counters["vector"] += 1
-            scale = min(1.0, available / drawing.width) if drawing.width else 1.0
+            scale = min(
+                1.0,
+                available / drawing.width if drawing.width else 1.0,
+                available_height / drawing.height if drawing.height else 1.0,
+            )
             drawing.scale(scale, scale)
             drawing.width *= scale
             drawing.height *= scale
@@ -522,7 +533,7 @@ def _figure_flowable(block: Figure, template: DocumentTemplate, counters: dict) 
         mime, payload = fallback
 
     counters["raster"] += 1
-    return [_raster_image(payload, available)]
+    return [_raster_image(payload, available, available_height)]
 
 
 def _svg_drawing(payload: bytes):
@@ -538,7 +549,13 @@ def _svg_drawing(payload: bytes):
         return None
 
 
-def _raster_image(payload: bytes, available: float) -> Image:
+CAPTION_ALLOWANCE = 40.0
+"""Points kept back for the caption that follows every figure. Without it a
+figure scaled to exactly the frame height pushes its own caption onto the next
+page, which is the orphan the keepWithNext was added to prevent."""
+
+
+def _raster_image(payload: bytes, available: float, available_height: float = 1e6) -> Image:
     """Place a bitmap at its true size, scaled down only if it overflows.
 
     Sizing from the image's own DPI rather than from its pixel count is what
@@ -557,9 +574,11 @@ def _raster_image(payload: bytes, available: float) -> Image:
     width = pixel_width / dpi_x * 72.0
     height = pixel_height / dpi_y * 72.0
 
-    if width > available:
-        height *= available / width
-        width = available
+    scale = min(
+        1.0, available / width if width else 1.0, available_height / height if height else 1.0
+    )
+    width *= scale
+    height *= scale
 
     image = Image(io.BytesIO(payload), width=width, height=height)
     image.hAlign = "CENTER"

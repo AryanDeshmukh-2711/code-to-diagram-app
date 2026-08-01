@@ -187,9 +187,12 @@ async def test_an_edited_model_is_regenerable_and_says_what_moved(session_factor
     assert plan.source_changed is True
     assert "line(s) added" in plan.reason
     # The diagrams that will still be wrong afterwards — named before the user
-    # has spent anything. Not use_case: renaming an entity does not touch it,
-    # and sending someone to redraw a correct figure is its own kind of lying.
-    assert set(plan.stale_types) == {"entity_relationship", "sequence"}
+    # has spent anything. Every one of them shows the renamed entity by name;
+    # the ones that do not (use_case, component, deployment, activity) are
+    # deliberately absent, because sending someone to redraw a correct figure
+    # is its own kind of lying.
+    assert set(plan.stale_types) == {"entity_relationship", "sequence", "state"}
+    assert not {"use_case", "component", "deployment", "activity"} & set(plan.stale_types)
 
 
 async def test_nothing_is_reported_stale_when_the_model_did_not_move(
@@ -410,7 +413,10 @@ async def test_history_shows_what_was_regenerated_and_when(session_factory, pare
         session_factory=session_factory,
     )
     await execute_regeneration(first, renderer(), session_factory=session_factory)
-    second_type = sorted(set(registry()) - {TARGET})[0]
+    # A diagram the rename actually moved. Picking the alphabetically first
+    # type would pick one the edit never touched, and the regeneration would be
+    # correctly refused as a no-op.
+    second_type = "entity_relationship"
     second = await create_regeneration_run(
         await plan_regeneration(first, second_type, version_id, session_factory=session_factory),
         session_factory=session_factory,

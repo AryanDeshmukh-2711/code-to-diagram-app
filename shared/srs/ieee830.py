@@ -64,6 +64,9 @@ class FigureInput:
     supplies one FigureInput carrying both, so PDF can use vector and DOCX can
     use raster without the two documents being assembled separately."""
 
+    def rendition_available(self, mime: str) -> bool:
+        return mime == self.mime or any(other == mime for other, _ in self.alternates)
+
 
 FIGURE_PLACEMENT: dict[str, str] = {
     "use_case": "product-functions",

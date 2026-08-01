@@ -11,9 +11,12 @@ costs nothing the user notices.
 import uuid
 from typing import Any, Literal
 
+from analytics import events
+from analytics.review_signals import ReviewSignals
+from billing.quota import QuotaExceeded, check_new_project
 from cpm.fixtures import library_management_system_payload
 from cpm.schema import CPMDraft
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from review import (
     ReviewError,
@@ -36,8 +39,11 @@ from review import (
 )
 from review.state import NotConfirmable
 from sqlalchemy import func, select
-from store.models import CPMDraftRow, CPMVersionRow
+from store.models import AccountRow, CPMDraftRow, CPMVersionRow, ProjectRow
 from store.session import SessionFactory
+
+from app.core.identity import owned_project, require_account
+from app.core.quota import as_http
 
 router = APIRouter(prefix="/projects/{project_id}/review", tags=["review"])
 
@@ -132,7 +138,9 @@ def _present(
     )
 
 
-async def _load(session, project_id: str) -> CPMDraftRow:
+async def _load(session, project_id: str, account: str) -> CPMDraftRow:
+    # One place, so no endpoint can read a draft without proving ownership.
+    await owned_project(session, project_id, account)
     row = await session.get(CPMDraftRow, project_id)
     if row is None:
         raise HTTPException(
@@ -143,7 +151,7 @@ async def _load(session, project_id: str) -> CPMDraftRow:
 
 
 @router.post("/seed", response_model=ReviewOut)
-async def seed(project_id: str, body: SeedIn) -> ReviewOut:
+async def seed(project_id: str, body: SeedIn, account: str = Depends(require_account)) -> ReviewOut:
     """Put a model into review.
 
     With no body this loads the sample project, which is how the screen is
@@ -155,6 +163,25 @@ async def seed(project_id: str, body: SeedIn) -> ReviewOut:
     async with SessionFactory() as session:
         row = await session.get(CPMDraftRow, project_id)
         if row is None:
+            # A new project is the thing the free tier counts (FR-22). Checked
+            # here, in the request, against the database — the button in the
+            # browser is a courtesy, not the lock.
+            project = await session.get(ProjectRow, project_id)
+            if project is None:
+                try:
+                    await check_new_project(session, account)
+                except QuotaExceeded as exc:
+                    raise as_http(exc) from None
+                if await session.get(AccountRow, account) is None:
+                    session.add(AccountRow(id=account))
+                session.add(ProjectRow(id=project_id, account_id=account, name=body.projectName))
+                await events.record(
+                    session,
+                    events.PROJECT_CREATED,
+                    account_id=account,
+                    project_id=project_id,
+                    payload={"projectName": body.projectName},
+                )
             row = CPMDraftRow(project_id=project_id)
             session.add(row)
         row.project_name = body.projectName
@@ -164,16 +191,16 @@ async def seed(project_id: str, body: SeedIn) -> ReviewOut:
 
 
 @router.get("", response_model=ReviewOut)
-async def get_review(project_id: str) -> ReviewOut:
+async def get_review(project_id: str, account: str = Depends(require_account)) -> ReviewOut:
     async with SessionFactory() as session:
-        row = await _load(session, project_id)
+        row = await _load(session, project_id, account)
         return _present(row, CPMDraft.model_validate(row.payload))
 
 
 @router.post("/edit", response_model=ReviewOut)
-async def edit(project_id: str, body: EditIn) -> ReviewOut:
+async def edit(project_id: str, body: EditIn, account: str = Depends(require_account)) -> ReviewOut:
     async with SessionFactory() as session:
-        row = await _load(session, project_id)
+        row = await _load(session, project_id, account)
         draft = CPMDraft.model_validate(row.payload)
 
         try:
@@ -236,11 +263,47 @@ def _apply(draft: CPMDraft, body: EditIn):
     return set_use_case_actors(draft, body.id or "", body.actorIds)
 
 
+class ConfirmIn(BaseModel):
+    """What the review screen observed while the user was on it.
+
+    Sent with the confirmation rather than trickled as separate events: the
+    question is what happened *before this decision*, and one payload attached
+    to the decision cannot be half-delivered by a closing tab.
+    """
+
+    editsTotal: int = 0
+    editsByOp: dict[str, int] = Field(default_factory=dict)
+    editsReverted: int = 0
+    secondsOnScreen: float = 0.0
+    activeSeconds: float = 0.0
+    itemsViewed: int = 0
+    sectionsViewed: list[str] = Field(default_factory=list)
+    inspections: int = 0
+    issuesAtOpen: int = 0
+
+
+def _reviewable_items(draft) -> int:
+    """How many things there were to look at.
+
+    The denominator for coverage, and the scale for how long a real review
+    would take. Counting only the collections the screen actually shows —
+    inventing a bigger denominator would make every user look inattentive.
+    """
+    return sum(
+        len(getattr(draft, name, []) or [])
+        for name in ("entities", "actors", "relationships", "use_cases")
+    )
+
+
 @router.post("/confirm", response_model=ConfirmOut)
-async def confirm(project_id: str) -> ConfirmOut:
+async def confirm(
+    project_id: str,
+    body: ConfirmIn | None = None,
+    account: str = Depends(require_account),
+) -> ConfirmOut:
     """The gate (FR-6). Writes an immutable version (FR-7)."""
     async with SessionFactory() as session:
-        row = await _load(session, project_id)
+        row = await _load(session, project_id, account)
         draft = CPMDraft.model_validate(row.payload)
 
         try:
@@ -261,6 +324,29 @@ async def confirm(project_id: str) -> ConfirmOut:
             payload=cpm.model_dump(by_alias=True, mode="json"),
         )
         session.add(stored)
+
+        # The most important event in the product. Raw signals and verdict
+        # together, so the thresholds can be re-argued against history later.
+        signals = ReviewSignals(
+            edits_total=(body.editsTotal if body else 0),
+            edits_by_op=(body.editsByOp if body else {}),
+            edits_reverted=(body.editsReverted if body else 0),
+            seconds_on_screen=(body.secondsOnScreen if body else 0.0),
+            active_seconds=(body.activeSeconds if body else 0.0),
+            items_total=_reviewable_items(draft),
+            items_viewed=(body.itemsViewed if body else 0),
+            sections_viewed=tuple(body.sectionsViewed) if body else (),
+            inspections=(body.inspections if body else 0),
+            issues_at_open=(body.issuesAtOpen if body else 0),
+            issues_at_confirm=0,
+        )
+        await events.record(
+            session,
+            events.CPM_CONFIRMED,
+            account_id=(account if body else None),
+            project_id=project_id,
+            payload={**signals.as_payload(), "cpmVersionId": stored.id, "version": version},
+        )
         await session.commit()
 
         return ConfirmOut(

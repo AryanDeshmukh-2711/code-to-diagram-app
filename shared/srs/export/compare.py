@@ -25,6 +25,7 @@ real difference and is reported as one.
 import io
 import re
 from dataclasses import dataclass, field
+from html import unescape
 
 PAGE_NUMBER = re.compile(r"Page \d+ of \d+")
 SVG_TEXT = re.compile(r"<(?:text|tspan)[^>]*>(.*?)</(?:text|tspan)>", re.S)
@@ -120,7 +121,11 @@ def figure_vocabulary(sources: list[bytes | str]) -> set[str]:
         text = source.decode("utf-8", "ignore") if isinstance(source, bytes) else source
         for fragment in SVG_TEXT.findall(text):
             cleaned = re.sub(r"<[^>]+>", " ", fragment)
-            words.update(cleaned.split())
+            # Entities, because PlantUML writes a UML stereotype as
+            # &#171;service&#187; in the SVG and the PDF draws it as
+            # «service». Comparing the two forms would report every stereotype
+            # in a component diagram as text the PDF invented.
+            words.update(unescape(cleaned).split())
     return words
 
 

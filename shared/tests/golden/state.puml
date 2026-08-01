@@ -1,0 +1,35 @@
+@startuml
+!theme plain
+skinparam shadowing false
+skinparam state {
+  BackgroundColor White
+}
+
+state "Book" as book {
+  state "Available" as state_book_available
+  state "On Loan" as state_book_on_loan
+  state "Reserved" as state_book_reserved
+  state "Lost" as state_book_lost
+  [*] --> state_book_available
+  state_book_available --> state_book_on_loan : borrow [copiesAvailable > 0]
+  state_book_available --> state_book_reserved : reserve
+  state_book_on_loan --> state_book_available : return [no active reservation]
+  state_book_on_loan --> state_book_reserved : return [reservation queued]
+  state_book_on_loan --> state_book_lost : reportLost
+  state_book_reserved --> state_book_on_loan : collect [collected before expiry]
+  state_book_reserved --> state_book_available : reservationExpired
+  state_book_lost --> [*]
+}
+
+state "Loan" as loan {
+  state "Active" as state_loan_active
+  state "Overdue" as state_loan_overdue
+  state "Closed" as state_loan_closed
+  [*] --> state_loan_active
+  state_loan_active --> state_loan_overdue : dueDatePassed
+  state_loan_active --> state_loan_closed : returned
+  state_loan_overdue --> state_loan_closed : returned [fine settled]
+  state_loan_closed --> [*]
+}
+
+@enduml

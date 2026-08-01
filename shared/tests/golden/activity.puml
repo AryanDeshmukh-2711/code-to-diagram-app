@@ -1,0 +1,103 @@
+@startuml
+!theme plain
+skinparam shadowing false
+skinparam activityDiamondBackgroundColor White
+
+partition "Borrow Book" {
+  start
+  note right: precondition — The member is registered and active.
+  note right: precondition — The member has not reached their borrowing limit.
+  note right: precondition — At least one copy of the book is available.
+  :The member presents the book at the lending desk.;
+  :The librarian scans the book's ISBN.;
+  :The system verifies the member's borrowing eligibility.;
+  :The system creates a loan with a due date.;
+  :The system decrements the available copy count.;
+  :The system issues a loan receipt to the member.;
+  if (alternate path?) then (yes)
+    :If the member has outstanding fines above the threshold, the system refuses the loan.;
+  endif
+  if (alternate path?) then (yes)
+    :If no copy is available, the system offers to place a reservation instead.;
+  endif
+  note right: postcondition — A loan record exists linking the member and the book.
+  note right: postcondition — The book's available copy count is reduced by one.
+  stop
+}
+
+partition "Return Book" {
+  start
+  note right: precondition — An open loan exists for the book and member.
+  :The member returns the book to the lending desk.;
+  :The librarian scans the book's ISBN.;
+  :The system closes the loan and records the return date.;
+  :The system increments the available copy count.;
+  if (alternate path?) then (yes)
+    :If the loan is past its due date, the system raises an overdue fine.;
+  endif
+  if (alternate path?) then (yes)
+    :If a reservation exists for the book, the system notifies the next member in the queue.;
+  endif
+  note right: postcondition — The loan is closed.
+  note right: postcondition — The book is available or allocated to a reservation.
+  stop
+}
+
+partition "Reserve Book" {
+  start
+  note right: precondition — The member is active.
+  note right: precondition — All copies of the book are currently on loan.
+  :The member searches the catalogue for the book.;
+  :The member requests a reservation.;
+  :The system records the reservation with an expiry date.;
+  :The system confirms the reservation to the member.;
+  if (alternate path?) then (yes)
+    :If the member already has an active reservation for the book, the system rejects the request.;
+  endif
+  note right: postcondition — A reservation record exists for the member and book.
+  stop
+}
+
+partition "Pay Fine" {
+  start
+  note right: precondition — The member has at least one unpaid fine.
+  :The member requests a statement of outstanding fines.;
+  :The system lists every unpaid fine and the total owed.;
+  :The member pays the amount at the desk.;
+  :The librarian records the payment.;
+  :The system marks the fines as paid.;
+  if (alternate path?) then (yes)
+    :If the member pays part of the amount, the system settles the oldest fines first.;
+  endif
+  note right: postcondition — The paid fines carry a payment date.
+  stop
+}
+
+partition "Manage Catalogue" {
+  start
+  note right: precondition — The user is authenticated as staff.
+  :The user opens the catalogue management screen.;
+  :The user adds, edits or withdraws a book record.;
+  :The system validates the ISBN and category.;
+  :The system saves the change and records who made it.;
+  if (alternate path?) then (yes)
+    :If the ISBN already exists, the system offers to adjust the copy count instead.;
+  endif
+  note right: postcondition — The catalogue reflects the change.
+  stop
+}
+
+partition "Manage Members" {
+  start
+  note right: precondition — The user is authenticated as an administrator.
+  :The administrator opens the member management screen.;
+  :The administrator registers, suspends or reactivates a member.;
+  :The system saves the change.;
+  if (alternate path?) then (yes)
+    :If the member has open loans, the system warns before suspension.;
+  endif
+  note right: postcondition — The member's account status is updated.
+  stop
+}
+
+@enduml

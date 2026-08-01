@@ -11,6 +11,7 @@ import os
 from typing import Any
 
 from worker.handlers.assemble import assemble_document
+from worker.handlers.export import export_document
 from worker.handlers.extract import extract_cpm
 from worker.handlers.render import regenerate_diagram, render_run
 from worker.settings import redis_settings as get_redis_settings
@@ -28,7 +29,12 @@ async def shutdown(ctx: dict[str, Any]) -> None:
 
 
 class WorkerSettings:
-    functions = [extract_cpm, render_run, regenerate_diagram, assemble_document]
+    queue_name = os.getenv("ARQ_QUEUE", "arq:default")
+    """Which queue this pool consumes. Run a second worker with
+    ARQ_QUEUE=arq:priority to serve the priority tier: one queue with a
+    priority column would still be first in, first out."""
+
+    functions = [extract_cpm, render_run, regenerate_diagram, export_document, assemble_document]
     redis_settings = get_redis_settings()
     on_startup = startup
     on_shutdown = shutdown
