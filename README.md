@@ -12,7 +12,7 @@ set in a university template. Time-poor, format-anxious, price-sensitive.
 
 ---
 
-## The one architectural rule
+## The one architectural rule 
 
 Everything is rendered from the **Canonical Project Model (CPM)**.
 
