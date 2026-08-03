@@ -33,7 +33,7 @@ import time
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 
 from fastapi import Header, HTTPException, status
-from store.models import GenerationRunRow, ProjectRow
+from store.models import ExtractionRow, GenerationRunRow, ProjectRow
 
 SECRET = os.getenv("ASA_SIGNING_SECRET", "").encode() or None
 DEFAULT_TTL_SECONDS = 900
@@ -183,3 +183,10 @@ async def owned_run(session, run_id: str, account_id: str) -> GenerationRunRow:
     if run is None or (run.account_id is not None and run.account_id != account_id):
         raise _not_found("run", run_id)
     return run
+
+
+async def owned_extraction(session, extraction_id: str, account_id: str) -> ExtractionRow:
+    row = await session.get(ExtractionRow, extraction_id)
+    if row is None or row.account_id != account_id:
+        raise _not_found("extraction", extraction_id)
+    return row

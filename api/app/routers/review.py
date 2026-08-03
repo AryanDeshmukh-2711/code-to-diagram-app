@@ -13,7 +13,6 @@ from typing import Any, Literal
 
 from analytics import events
 from analytics.review_signals import ReviewSignals
-from billing.quota import QuotaExceeded, check_new_project
 from cpm.fixtures import library_management_system_payload
 from cpm.schema import CPMDraft
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -39,11 +38,11 @@ from review import (
 )
 from review.state import NotConfirmable
 from sqlalchemy import func, select
-from store.models import AccountRow, CPMDraftRow, CPMVersionRow, ProjectRow
+from store.models import CPMDraftRow, CPMVersionRow
 from store.session import SessionFactory
 
 from app.core.identity import owned_project, require_account
-from app.core.quota import as_http
+from app.core.projects import ensure_project
 
 router = APIRouter(prefix="/projects/{project_id}/review", tags=["review"])
 
@@ -166,22 +165,7 @@ async def seed(project_id: str, body: SeedIn, account: str = Depends(require_acc
             # A new project is the thing the free tier counts (FR-22). Checked
             # here, in the request, against the database — the button in the
             # browser is a courtesy, not the lock.
-            project = await session.get(ProjectRow, project_id)
-            if project is None:
-                try:
-                    await check_new_project(session, account)
-                except QuotaExceeded as exc:
-                    raise as_http(exc) from None
-                if await session.get(AccountRow, account) is None:
-                    session.add(AccountRow(id=account))
-                session.add(ProjectRow(id=project_id, account_id=account, name=body.projectName))
-                await events.record(
-                    session,
-                    events.PROJECT_CREATED,
-                    account_id=account,
-                    project_id=project_id,
-                    payload={"projectName": body.projectName},
-                )
+            await ensure_project(session, project_id, account, body.projectName)
             row = CPMDraftRow(project_id=project_id)
             session.add(row)
         row.project_name = body.projectName

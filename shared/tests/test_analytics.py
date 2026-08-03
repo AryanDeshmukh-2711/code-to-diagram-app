@@ -305,7 +305,7 @@ def test_every_run_and_project_route_proves_ownership() -> None:
 
     routers = Path(__file__).resolve().parents[2] / "api" / "app" / "routers"
     unguarded = []
-    for name in ("runs.py", "review.py", "exports.py"):
+    for name in ("runs.py", "review.py", "exports.py", "extraction.py"):
         source = (routers / name).read_text(encoding="utf-8")
         tree = ast.parse(source)
         for node in ast.walk(tree):
@@ -327,7 +327,15 @@ def test_every_run_and_project_route_proves_ownership() -> None:
                 unguarded.append(f"{name}:{node.name} has no identity")
             elif not any(
                 helper in body
-                for helper in ("owned_run", "owned_project", "_load", "check_new", "account_id")
+                for helper in (
+                    "owned_run",
+                    "owned_project",
+                    "owned_extraction",
+                    "ensure_project",
+                    "_load",
+                    "check_new",
+                    "account_id",
+                )
             ):
                 unguarded.append(f"{name}:{node.name} never checks ownership")
     assert not unguarded, "\n".join(unguarded)
