@@ -98,6 +98,58 @@ class ExportRow(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class ExtractionRow(Base):
+    """One request to turn text or a PDF into a CPM draft (P-M6-1).
+
+    `status` is the job's own lifecycle (pending/running/succeeded/failed).
+    `outcome` is a second axis, set only once status is succeeded:
+    "extracted" or "insufficient". Hitting the FR-5 floor is a *succeeded*
+    extraction that honestly found too little to work with — it is not a
+    failure, and collapsing the two axes into one would make the FR-5 floor
+    indistinguishable from a gateway error in every client that reads this row.
+    """
+
+    __tablename__ = "extractions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    account_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+
+    input_kind: Mapped[str] = mapped_column(String(8), nullable=False)
+    """"text" or "pdf" — what the caller sent, not how it was interpreted."""
+
+    source_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_pdf: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    """Raw bytes, kept only long enough for the worker to run
+    `extract_pdf_text` on them — the per-page work that must not happen in the
+    request cycle (C-4). Probing (size, page count) already happened before
+    this row was written, so a row only exists for an upload that passed the
+    cheap checks."""
+
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    outcome: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
+    word_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    entities_found: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    relationships_found: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    guidance: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    notes: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+
+    cpm_draft_ready: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    """True once a successful, non-insufficient extraction has been written
+    into `CPMDraftRow`. A client polling this row does not need to know the
+    draft's shape — only that `GET /projects/{id}/review` now has something."""
+
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class EventRow(Base):
     """One thing that happened. Append-only (PRD section 9).
 

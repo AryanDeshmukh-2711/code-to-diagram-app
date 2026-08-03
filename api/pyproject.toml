@@ -15,6 +15,9 @@ dependencies = [
     "asyncpg>=0.30",
     "redis>=5.2",
     "httpx>=0.28",
+    # multipart form parsing — FastAPI's Form()/UploadFile need it to accept a
+    # PDF upload alongside pasted text on the same endpoint.
+    "python-multipart>=0.0.12",
 ]
 
 [project.optional-dependencies]

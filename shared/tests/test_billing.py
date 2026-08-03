@@ -235,7 +235,7 @@ def test_the_api_routes_call_the_quota_service() -> None:
     exercised the happy path.
     """
     called: dict[str, set[str]] = {}
-    for name in ("review.py", "runs.py"):
+    for name in ("review.py", "runs.py", "extraction.py"):
         tree = ast.parse((API / name).read_text(encoding="utf-8"))
         called[name] = {
             node.func.id
@@ -243,14 +243,33 @@ def test_the_api_routes_call_the_quota_service() -> None:
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
         }
 
-    assert "check_new_project" in called["review.py"], "project creation is unguarded"
+    # review.py and extraction.py both create projects, and both do it through
+    # the one shared gate (app.core.projects.ensure_project) so the check
+    # cannot drift between the two entry points. ensure_project itself calls
+    # check_new_project — see test_project_creation_is_gated_by_quota below.
+    assert "ensure_project" in called["review.py"], "project creation is unguarded"
+    assert "ensure_project" in called["extraction.py"], "project creation is unguarded"
     assert "check_new_run" in called["runs.py"], "run creation is unguarded"
     assert "check_template" in called["runs.py"], "template choice is unguarded"
 
 
+def test_project_creation_is_gated_by_quota() -> None:
+    """The shared creation path both review.py and extraction.py delegate to
+    actually contains the check, closing the indirection the test above can't
+    see through."""
+    projects_py = API.parent / "core" / "projects.py"
+    tree = ast.parse(projects_py.read_text(encoding="utf-8"))
+    calls = {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "check_new_project" in calls, "ensure_project no longer checks quota"
+
+
 def test_no_route_offers_a_way_to_skip_the_check() -> None:
     forbidden = ("skip_quota", "skipQuota", "ignore_quota", "bypass_quota", "no_quota")
-    for name in ("review.py", "runs.py"):
+    for name in ("review.py", "runs.py", "extraction.py"):
         source = (API / name).read_text(encoding="utf-8")
         for token in forbidden:
             assert token not in source, f"{name} offers {token}"

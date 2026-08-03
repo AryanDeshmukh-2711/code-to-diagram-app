@@ -18,13 +18,14 @@ dependencies = [
     # than a second pass over a finished file.
     "reportlab>=4.2",
     "svglib>=1.5",
+    # PDF ingestion (P-M6-1): a project description may arrive as a PDF, and
+    # reading it back out is a real dependency of extraction, not just of the
+    # AT-1 equivalence test that also happens to use it.
+    "pypdf>=5.0",
 ]
 
 [project.optional-dependencies]
-# pypdf is a test-only tool: the AT-1 equivalence test has to read text back
-# out of the PDF it produced, and reading it with the library that wrote it
-# would prove nothing.
-dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "pypdf>=5.0"]
+dev = ["pytest>=8.3", "pytest-asyncio>=0.24"]
 
 [build-system]
 requires = ["setuptools>=68"]
