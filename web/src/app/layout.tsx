@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
 
+import { AppHeader } from "@/components/AppHeader";
+
 export const metadata: Metadata = {
   title: "AI Software Architect",
   description:
@@ -12,7 +14,10 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body className="min-h-screen antialiased">{children}</body>
+      <body className="min-h-screen antialiased">
+        <AppHeader />
+        {children}
+      </body>
     </html>
   );
 }
