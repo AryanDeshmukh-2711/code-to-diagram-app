@@ -8,12 +8,22 @@ import { MessageList } from "@/components/chat/MessageList";
 import type { ChatMessage, ConfirmedVersion } from "@/components/chat/types";
 import { type ChatEdit, sendChatMessage, streamChatEdit } from "@/lib/chat";
 import { chatEditOutcomeNarration, chatEditProgressNarration } from "@/lib/chatEditNarration";
-import { ApiError } from "@/lib/client";
+import { _resetUnauthorizedHandler, _setUnauthorizedHandler, ApiError } from "@/lib/client";
+import { exportOutcomeNarration, exportProgressNarration } from "@/lib/exportNarration";
+import { looksLikeExportRequest, parseExportFormat } from "@/lib/exportIntent";
+import {
+  getExport,
+  listTemplates,
+  requestExport,
+  type ExportResult,
+  type TemplateSummary,
+} from "@/lib/exports";
 import { extractFromPdf, extractFromText, streamExtraction, type Extraction } from "@/lib/extraction";
 import { looksLikeGenerateRequest } from "@/lib/generateIntent";
 import { historyNarration } from "@/lib/historyNarration";
 import { looksLikeHistoryRequest } from "@/lib/historyIntent";
 import { extractionOutcomeNarration, extractionProgressNarration } from "@/lib/narration";
+import { quotaRefusal } from "@/lib/quota";
 import { confirmReview, loadReview, type Review, ReviewRefused } from "@/lib/review";
 import { regeneratePlanNarration } from "@/lib/regenerateNarration";
 import { looksLikeRegenerateRequest } from "@/lib/regenerateIntent";
@@ -27,6 +37,7 @@ import {
   startRun,
   streamRun,
 } from "@/lib/runs";
+import { clearSession } from "@/lib/session";
 
 function newId(): string {
   return typeof crypto !== "undefined" && crypto.randomUUID
@@ -37,6 +48,11 @@ function newId(): string {
 function pdfProjectName(file: File): string {
   return file.name.replace(/\.pdf$/i, "").trim() || "New project";
 }
+
+/** How often an in-flight export is re-checked. No SSE stream exists for
+ * exports (unlike runs), so this is a plain poll — infrequent enough not to
+ * hammer the API, frequent enough that "assembling…" doesn't sit stale. */
+const EXPORT_POLL_MS = 900;
 
 type PendingClarification = {
   /** Everything said so far in this back-and-forth, so the parser sees the
@@ -50,7 +66,8 @@ type PendingClarification = {
 /**
  * Wires the composer to real extraction (P-M6-1), real chat edit-intent
  * parsing (P-M6-2), the confirm gate (P-M6-7), diagram generation (P-M6-8),
- * and regeneration + lineage (P-M6-9).
+ * regeneration + lineage (P-M6-9), export (P-M6-10), and quota/billing/auth
+ * messaging (P-M6-11).
  *
  * Everything narrated here comes straight off the row the backend returns
  * for whichever job is in flight: lib/narration.ts, lib/chatEditNarration.ts,
@@ -76,13 +93,38 @@ type PendingClarification = {
  * has no confirm-shaped op to recognise it as, pinned by
  * shared/tests/test_confirm_is_not_chat_parseable.py.
  *
- * "Generate the diagrams", "redraw the class diagram" and "what have I
- * changed?" are each recognised the same deliberate way "attach" is
- * (P-M6-4): a small local check (lib/generateIntent.ts,
- * lib/regenerateIntent.ts, lib/historyIntent.ts) before a message ever
- * reaches the edit-intent parser, never new ops added to that parser's
- * vocabulary. Nothing here offers a way to make an unchanged diagram redraw
- * anyway — a structural test in this module's lib/ directory pins that.
+ * "Generate the diagrams", "redraw the class diagram", "what have I
+ * changed?" and "export this as a PDF" are each recognised the same
+ * deliberate way "attach" is (P-M6-4): a small local check
+ * (lib/generateIntent.ts, lib/regenerateIntent.ts, lib/historyIntent.ts,
+ * lib/exportIntent.ts) before a message ever reaches the edit-intent parser,
+ * never new ops added to that parser's vocabulary. Nothing here offers a way
+ * to make an unchanged diagram redraw anyway — a structural test in this
+ * module's lib/ directory pins that.
+ *
+ * Export (P-M6-10) collects format and template conversationally rather
+ * than assuming either: a format named in the same message is used
+ * immediately, an unnamed one is asked for and the next message is read for
+ * just that answer, falling through to the normal pipeline unchanged if it
+ * names none. The template — and that template's own required fields
+ * (FR-15) — are collected by one card, ExportSetupCard, whose Submit stays
+ * disabled until every required field is filled; `POST .../export` is never
+ * called before that (see its own docstring). A `needs_png` failure and the
+ * offer to fix it are the backend's own guidance and this product's existing
+ * generation path respectively — nothing here reimplements either.
+ *
+ * Quota, billing and auth messages (P-M6-11) are canonical API output, not
+ * narration: `reportApiError` is the one place every catch block in this
+ * component funnels through, and it never lets a 402 or a 401 reach the
+ * generic "assistant said something went wrong" bubble every other error
+ * does. A 402 becomes a QuotaRefusalCard carrying `code`, `message`, `tier`,
+ * `limit`, `used`, `upgradeTo` and `upgradeGives` exactly as
+ * `billing/quota.py` wrote them (lib/quota.ts). A 401 becomes a
+ * SessionExpiredCard rather than the dead conversation a silent
+ * `window.location.href` redirect would leave behind: this component
+ * overrides `client.ts`'s default unauthorized handler for as long as it is
+ * mounted specifically so that redirect never fires out from under an
+ * in-progress action, and restores the default on unmount.
  */
 export function ChatSession({ projectId }: { projectId: string }) {
   const [messages, setMessages] = useState<ChatMessage[]>(() => [
@@ -104,10 +146,21 @@ export function ChatSession({ projectId }: { projectId: string }) {
     null,
   );
   const [latestRunId, setLatestRunId] = useState<string | null>(null);
+  const [awaitingExportFormat, setAwaitingExportFormat] = useState(false);
+  const [exportSubmittingId, setExportSubmittingId] = useState<string | null>(null);
   const activeStream = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    return () => activeStream.current?.();
+    // While this session is mounted, a 401 must not silently navigate the
+    // page away — that is the "dead conversation" the DoD names. Clearing
+    // the stale token is still correct (nothing should keep sending it);
+    // only the redirect is suppressed, in favour of reportApiError's own
+    // inline SessionExpiredCard.
+    _setUnauthorizedHandler(() => clearSession());
+    return () => {
+      activeStream.current?.();
+      _resetUnauthorizedHandler();
+    };
   }, []);
 
   function append(message: ChatMessage) {
@@ -128,6 +181,42 @@ export function ChatSession({ projectId }: { projectId: string }) {
         message.id === id && message.kind === "diagram-progress" ? { ...message, run } : message,
       ),
     );
+  }
+
+  /** Every catch block in this component funnels through here (P-M6-11).
+   * `narrationId`, when given, names the in-flight "…ing" bubble this action
+   * already posted — a 402 or 401 turns it into a short, generic pointer,
+   * never the canonical message itself, which appears in full in the card
+   * appended right after. Routing a quota refusal or a session expiry
+   * through the same "assistant said something went wrong" text every other
+   * error uses is exactly the Watch For this step names: that shortcut is
+   * what already reintroduced copy drift once. */
+  function reportApiError(narrationId: string | null, error: unknown, fallback: string) {
+    const refusal = quotaRefusal(error);
+    const expired = error instanceof ApiError && error.status === 401;
+
+    if (refusal || expired) {
+      if (narrationId) updateNarration(narrationId, "That didn't go through — see below.");
+      append(
+        refusal
+          ? { id: newId(), role: "assistant", kind: "quota-refusal", refusal, at: new Date().toISOString() }
+          : {
+              id: newId(),
+              role: "assistant",
+              kind: "session-expired",
+              returnTo: `/projects/${projectId}/chat`,
+              at: new Date().toISOString(),
+            },
+      );
+      return;
+    }
+
+    const message = error instanceof ApiError ? error.message : fallback;
+    if (narrationId) {
+      updateNarration(narrationId, message);
+    } else {
+      append({ id: newId(), role: "assistant", kind: "narration", source: message, at: new Date().toISOString() });
+    }
   }
 
   /** Re-fetches the live review state and posts a fresh card. Called after
@@ -171,10 +260,11 @@ export function ChatSession({ projectId }: { projectId: string }) {
     });
   }
 
-  /** POST /runs. Called both right after a successful confirm and from a
-   * "generate the diagrams" follow-up — the same action, two ways to reach
-   * it. */
-  async function runDiagramGeneration(cpmVersionId: string) {
+  /** POST /runs. Called right after a successful confirm, from a "generate
+   * the diagrams" follow-up, and from a needs-png card's "Render PNG" —
+   * `format` defaults to the backend's own default (svg) unless a card asks
+   * for a specific one. */
+  async function runDiagramGeneration(cpmVersionId: string, format?: string) {
     const narrationId = newId();
     append({
       id: narrationId,
@@ -188,12 +278,9 @@ export function ChatSession({ projectId }: { projectId: string }) {
 
     let run: Run;
     try {
-      run = await startRun({ projectId, cpmVersionId });
+      run = await startRun(format ? { projectId, cpmVersionId, format } : { projectId, cpmVersionId });
     } catch (error) {
-      updateNarration(
-        narrationId,
-        error instanceof ApiError ? error.message : "Something went wrong starting that.",
-      );
+      reportApiError(narrationId, error, "Something went wrong starting that.");
       setBusy(false);
       return;
     }
@@ -223,14 +310,7 @@ export function ChatSession({ projectId }: { projectId: string }) {
     try {
       plan = await regenerate(latestRunId, { diagramType });
     } catch (error) {
-      append({
-        id: newId(),
-        role: "assistant",
-        kind: "narration",
-        source:
-          error instanceof ApiError ? error.message : "Something went wrong regenerating that.",
-        at: new Date().toISOString(),
-      });
+      reportApiError(null, error, "Something went wrong regenerating that.");
       setBusy(false);
       return;
     }
@@ -254,10 +334,7 @@ export function ChatSession({ projectId }: { projectId: string }) {
       const run = await getRun(plan.runId);
       trackRun(run, narrationId);
     } catch (error) {
-      updateNarration(
-        narrationId,
-        error instanceof ApiError ? error.message : "Something went wrong fetching that run.",
-      );
+      reportApiError(narrationId, error, "Something went wrong fetching that run.");
       setBusy(false);
     }
   }
@@ -286,15 +363,144 @@ export function ChatSession({ projectId }: { projectId: string }) {
         at: new Date().toISOString(),
       });
     } catch (error) {
+      reportApiError(null, error, "Something went wrong fetching the history.");
+    }
+  }
+
+  /** "Export this as a PDF" -> collects the template and its own required
+   * fields via one ExportSetupCard. GET /templates is the only thing this
+   * calls before that card exists — never a guess at what a tier or
+   * template allows. */
+  async function beginExport(format: "pdf" | "docx") {
+    if (!latestRunId || !latestConfirmedVersion) {
       append({
         id: newId(),
         role: "assistant",
         kind: "narration",
-        source:
-          error instanceof ApiError ? error.message : "Something went wrong fetching the history.",
+        source: "Nothing's been generated yet — generate the diagrams first.",
         at: new Date().toISOString(),
       });
+      return;
     }
+
+    setBusy(true);
+    let templates: TemplateSummary[];
+    try {
+      templates = await listTemplates();
+    } catch (error) {
+      reportApiError(null, error, "Something went wrong listing templates.");
+      setBusy(false);
+      return;
+    }
+    setBusy(false);
+
+    append({
+      id: newId(),
+      role: "assistant",
+      kind: "export-setup",
+      runId: latestRunId,
+      cpmVersionId: latestConfirmedVersion.versionId,
+      format,
+      templates,
+      submitted: false,
+      at: new Date().toISOString(),
+    });
+  }
+
+  /** Polls GET /exports/{id} to a terminal state (no SSE stream exists for
+   * exports, unlike runs) and posts the finished card. */
+  function trackExport(exportId: string, narrationId: string) {
+    let cancelled = false;
+    activeStream.current = () => {
+      cancelled = true;
+    };
+
+    async function tick() {
+      if (cancelled) return;
+      let result: ExportResult;
+      try {
+        result = await getExport(exportId);
+      } catch (error) {
+        reportApiError(narrationId, error, "Something went wrong checking that export.");
+        activeStream.current = null;
+        setBusy(false);
+        return;
+      }
+      if (cancelled) return;
+
+      if (result.status === "pending" || result.status === "running") {
+        updateNarration(narrationId, exportProgressNarration(result.status));
+        setTimeout(() => void tick(), EXPORT_POLL_MS);
+        return;
+      }
+
+      updateNarration(narrationId, exportOutcomeNarration(result));
+      append({
+        id: newId(),
+        role: "assistant",
+        kind: "export-ready",
+        export: result,
+        at: new Date().toISOString(),
+      });
+      activeStream.current = null;
+      setBusy(false);
+    }
+
+    void tick();
+  }
+
+  /** An export-setup card's Submit — the only path to `POST .../export`
+   * (see ExportSetupCard's own docstring: Submit itself is disabled until
+   * every required field is filled, so this only ever receives a complete
+   * set). A `needs_png` failure surfaces as its own card with the backend's
+   * exact guidance and an offer to fix it; the setup card is left usable so
+   * the same fields can be resubmitted once that finishes. */
+  async function onExportSubmit(messageId: string, templateId: string, fields: Record<string, string>) {
+    const message = messages.find((candidate) => candidate.id === messageId);
+    if (!message || message.kind !== "export-setup" || message.submitted) return;
+
+    setExportSubmittingId(messageId);
+    setBusy(true);
+
+    let result: ExportResult;
+    try {
+      result = await requestExport(message.runId, { format: message.format, templateId, fields });
+    } catch (error) {
+      setExportSubmittingId(null);
+      setBusy(false);
+      if (error instanceof ApiError && error.code === "needs_png") {
+        append({
+          id: newId(),
+          role: "assistant",
+          kind: "needs-png",
+          message: error.message,
+          cpmVersionId: message.cpmVersionId,
+          at: new Date().toISOString(),
+        });
+        return;
+      }
+      reportApiError(null, error, "Something went wrong starting that export.");
+      return;
+    }
+
+    setMessages((current) =>
+      current.map((candidate) =>
+        candidate.id === messageId && candidate.kind === "export-setup"
+          ? { ...candidate, submitted: true }
+          : candidate,
+      ),
+    );
+    setExportSubmittingId(null);
+
+    const narrationId = newId();
+    append({
+      id: narrationId,
+      role: "assistant",
+      kind: "narration",
+      source: exportProgressNarration(result.status),
+      at: new Date().toISOString(),
+    });
+    trackExport(result.exportId, narrationId);
   }
 
   async function onConfirmProject(messageId: string, review: Review) {
@@ -319,14 +525,19 @@ export function ChatSession({ projectId }: { projectId: string }) {
       });
       await runDiagramGeneration(version.versionId);
     } catch (error) {
-      append({
-        id: newId(),
-        role: "assistant",
-        kind: "narration",
-        source:
-          error instanceof ReviewRefused ? error.message : "Something went wrong confirming that.",
-        at: new Date().toISOString(),
-      });
+      if (error instanceof ReviewRefused) {
+        append({
+          id: newId(),
+          role: "assistant",
+          kind: "narration",
+          source: error.message,
+          at: new Date().toISOString(),
+        });
+      } else {
+        // A 401 surfaces here as a plain ApiError, not ReviewRefused — see
+        // review.ts's asReview docstring for why that distinction matters.
+        reportApiError(null, error, "Something went wrong confirming that.");
+      }
     } finally {
       setConfirmingId(null);
     }
@@ -336,6 +547,17 @@ export function ChatSession({ projectId }: { projectId: string }) {
     // The user sees exactly what they typed; only the message sent to the
     // parser is enriched with the pending question and its own context.
     append({ id: newId(), role: "user", kind: "text", text, at: new Date().toISOString() });
+
+    if (awaitingExportFormat) {
+      const format = parseExportFormat(text);
+      setAwaitingExportFormat(false);
+      if (format) {
+        void beginExport(format);
+        return;
+      }
+      // No format recognised in the reply — fall through to the checks
+      // below rather than re-asking forever on a message that has moved on.
+    }
 
     if (looksLikeGenerateRequest(text)) {
       if (!latestConfirmedVersion) {
@@ -363,6 +585,23 @@ export function ChatSession({ projectId }: { projectId: string }) {
       return;
     }
 
+    const exportRequest = looksLikeExportRequest(text);
+    if (exportRequest) {
+      if (exportRequest.format) {
+        void beginExport(exportRequest.format);
+      } else {
+        setAwaitingExportFormat(true);
+        append({
+          id: newId(),
+          role: "assistant",
+          kind: "narration",
+          source: "PDF or DOCX?",
+          at: new Date().toISOString(),
+        });
+      }
+      return;
+    }
+
     const messageToSend = pendingClarification
       ? `${pendingClarification.contextText}\n\nYou asked: "${pendingClarification.question}"\nMy answer: ${text}`
       : text;
@@ -382,10 +621,7 @@ export function ChatSession({ projectId }: { projectId: string }) {
     try {
       edit = await sendChatMessage(projectId, messageToSend);
     } catch (error) {
-      updateNarration(
-        narrationId,
-        error instanceof ApiError ? error.message : "Something went wrong sending that.",
-      );
+      reportApiError(narrationId, error, "Something went wrong sending that.");
       setBusy(false);
       return;
     }
@@ -446,10 +682,7 @@ export function ChatSession({ projectId }: { projectId: string }) {
           ? await extractFromPdf(projectId, attachment.file, pdfProjectName(attachment.file))
           : await extractFromText(projectId, attachment.text, "New project");
     } catch (error) {
-      updateNarration(
-        narrationId,
-        error instanceof ApiError ? error.message : "Something went wrong sending that.",
-      );
+      reportApiError(narrationId, error, "Something went wrong sending that.");
       setBusy(false);
       return;
     }
@@ -480,7 +713,15 @@ export function ChatSession({ projectId }: { projectId: string }) {
         </div>
       ) : null}
       <div className="flex-1 overflow-hidden">
-        <MessageList messages={messages} onConfirm={onConfirmProject} confirmingId={confirmingId} />
+        <MessageList
+          messages={messages}
+          onConfirm={onConfirmProject}
+          confirmingId={confirmingId}
+          onExportSubmit={onExportSubmit}
+          exportSubmittingId={exportSubmittingId}
+          onRenderPng={(cpmVersionId) => void runDiagramGeneration(cpmVersionId, "png")}
+          busy={busy}
+        />
       </div>
       <Composer onSend={onSend} onAttach={onAttach} busy={busy} />
     </main>

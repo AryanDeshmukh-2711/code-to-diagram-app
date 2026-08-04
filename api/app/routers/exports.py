@@ -18,12 +18,18 @@ from typing import Any
 from analytics import events
 from arq import create_pool
 from arq.connections import RedisSettings
-from billing.quota import QuotaExceeded, check_export
+from billing.quota import QuotaExceeded, account_tier, check_export
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
 from generation.export import gather_figures
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from srs.template.apply import (
+    MissingTemplateFields,
+    TemplateInputs,
+    available_templates,
+    check_fields,
+)
 from store.models import ExportRow, GenerationArtefactRow
 from store.session import SessionFactory
 
@@ -52,6 +58,8 @@ class ExportOut(BaseModel):
     url: str | None = None
     bytes: int | None = None
     error: str | None = None
+    watermarked: bool = False
+    tier: str | None = None
 
 
 @router.post("/{run_id}/export", status_code=status.HTTP_202_ACCEPTED)
@@ -96,6 +104,31 @@ async def export_run(
                 },
             )
 
+        templates = available_templates()
+        template = templates.get(body.templateId)
+        if template is None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail=f"no template {body.templateId!r}; available: "
+                f"{', '.join(sorted(templates))}",
+            )
+
+        # FR-15, checked here for the same reason needs_png is: cheap, and a
+        # missing field is far more useful named now than discovered by the
+        # worker with nobody watching. Every missing field at once, never one
+        # at a time — check_fields already guarantees that.
+        try:
+            check_fields(template, TemplateInputs(values=dict(body.fields)))
+        except MissingTemplateFields as exc:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "missing_fields",
+                    "message": str(exc),
+                    "missing": exc.missing,
+                },
+            ) from None
+
         request = ExportRow(
             id=f"exp_{uuid.uuid4().hex[:16]}",
             run_id=run_id,
@@ -122,46 +155,13 @@ async def export_run(
     finally:
         await pool.aclose()
 
-    return ExportOut(exportId=export_id, status="pending", format=body.format)
-
-
-@router.get("/exports/{export_id}", response_model=ExportOut)
-async def export_status(export_id: str, account: str = Depends(require_account)) -> ExportOut:
-    """Where the export got to, and a signed link once it is finished."""
-    async with SessionFactory() as session:
-        request = await session.get(ExportRow, export_id)
-        if request is None or request.account_id != account:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"no export {export_id!r}")
-
-        finished = request.status == "succeeded"
-        payload = ExportOut(
-            exportId=export_id,
-            status=request.status,
-            format=request.format,
-            bytes=len(request.content or b"") or None,
-            error=request.error,
-            url=(f"/exports/{export_id}/download?token={sign(export_id)}" if finished else None),
-        )
-
-        if finished:
-            await events.record(
-                session,
-                events.EXPORT_COMPLETED,
-                account_id=account,
-                run_id=request.run_id,
-                tier=request.tier,
-                payload={
-                    "format": request.format,
-                    "templateId": request.template_id,
-                    "bytes": len(request.content or b""),
-                    "figures": request.figures,
-                    "tables": request.tables,
-                    "watermarked": request.watermarked,
-                },
-            )
-            await session.commit()
-
-    return payload
+    return ExportOut(
+        exportId=export_id,
+        status="pending",
+        format=body.format,
+        watermarked=bool(tier.watermark and body.format == "pdf"),
+        tier=tier.id,
+    )
 
 
 @router.get("/{run_id}/artefacts")
@@ -189,7 +189,103 @@ async def artefact_links(run_id: str, account: str = Depends(require_account)) -
     }
 
 
+class TemplateFieldOut(BaseModel):
+    key: str
+    label: str
+    kind: str
+    required: bool
+    placeholder: str
+    help: str
+
+
+class TemplateOut(BaseModel):
+    id: str
+    name: str
+    description: str
+    fields: list[TemplateFieldOut]
+
+
+templates_router = APIRouter(tags=["exports"])
+
+
+@templates_router.get("/templates", response_model=list[TemplateOut])
+async def list_templates(account: str = Depends(require_account)) -> list[TemplateOut]:
+    """Every template this account's tier may export with, fields and all
+    (FR-15). The chat surface reads labels, placeholders and required-ness
+    from here — it is not allowed to know what a template needs any other
+    way."""
+    async with SessionFactory() as session:
+        tier = await account_tier(session, account)
+
+    return [
+        TemplateOut(
+            id=template.id,
+            name=template.name,
+            description=template.description,
+            fields=[
+                TemplateFieldOut(
+                    key=field.key,
+                    label=field.label,
+                    kind=field.kind,
+                    required=field.required,
+                    placeholder=field.placeholder,
+                    help=field.help,
+                )
+                for field in template.fields
+            ],
+        )
+        for template in sorted(available_templates().values(), key=lambda t: t.id)
+        if tier.allows_template(template.id)
+    ]
+
+
 artefact_router = APIRouter(tags=["exports"])
+
+
+@artefact_router.get("/exports/{export_id}", response_model=ExportOut)
+async def export_status(export_id: str, account: str = Depends(require_account)) -> ExportOut:
+    """Where the export got to, and a signed link once it is finished.
+
+    Unprefixed, like its sibling download route below: an export has its own
+    id and is not addressed through the run that produced it, the same
+    reason `/exports/{export_id}/download` was never `/runs/exports/...`.
+    """
+    async with SessionFactory() as session:
+        request = await session.get(ExportRow, export_id)
+        if request is None or request.account_id != account:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"no export {export_id!r}")
+
+        finished = request.status == "succeeded"
+        payload = ExportOut(
+            exportId=export_id,
+            status=request.status,
+            format=request.format,
+            bytes=len(request.content or b"") or None,
+            error=request.error,
+            url=(f"/exports/{export_id}/download?token={sign(export_id)}" if finished else None),
+            watermarked=request.watermarked,
+            tier=request.tier,
+        )
+
+        if finished:
+            await events.record(
+                session,
+                events.EXPORT_COMPLETED,
+                account_id=account,
+                run_id=request.run_id,
+                tier=request.tier,
+                payload={
+                    "format": request.format,
+                    "templateId": request.template_id,
+                    "bytes": len(request.content or b""),
+                    "figures": request.figures,
+                    "tables": request.tables,
+                    "watermarked": request.watermarked,
+                },
+            )
+            await session.commit()
+
+    return payload
 
 
 @artefact_router.get("/exports/{export_id}/download")

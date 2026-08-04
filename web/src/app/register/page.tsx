@@ -75,6 +75,14 @@ export default function RegisterPage() {
         </CardHeader>
         <form onSubmit={onSubmit}>
           <CardContent className="space-y-4">
+            <Alert>
+              <AlertTitle>Your key is shown exactly once</AlertTitle>
+              <AlertDescription>
+                Right after you create your account, on this page, and never again after that —
+                not here, not by contacting support. Have somewhere ready to paste it before you
+                submit.
+              </AlertDescription>
+            </Alert>
             <div className="space-y-2">
               <Label htmlFor="email">Email (optional)</Label>
               <Input

@@ -18,11 +18,21 @@ export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://loca
 
 export class ApiError extends Error {
   readonly status: number;
+  /** The server's own error code (e.g. "needs_png", "missing_fields"), when
+   * the detail was structured. Callers that need to react to a specific
+   * failure branch on this, never on parsing `.message`. */
+  readonly code?: string;
+  /** The raw structured detail, when the server sent one — carries fields
+   * beyond `code`/`message` (e.g. `missing_fields`'s `missing` list) that a
+   * caller may need without this module inventing a shape for each of them. */
+  readonly detail?: unknown;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, code?: string, detail?: unknown) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.code = code;
+    this.detail = detail;
   }
 }
 
@@ -35,8 +45,11 @@ const defaultUnauthorized: Unauthorized = () => {
 
 let onUnauthorized: Unauthorized = defaultUnauthorized;
 
-/** Swaps the 401 handler. Only real caller is tests — production code never
- * needs a second way to react to a session going bad. */
+/** Swaps the 401 handler. Most callers are tests, but ChatSession is a real
+ * production one (P-M6-11): the default's hard redirect is exactly the
+ * silently-abandoned conversation a 401 mid-chat must not cause, so it
+ * overrides this for as long as it is mounted and restores the default on
+ * unmount. */
 export function _setUnauthorizedHandler(handler: Unauthorized): void {
   onUnauthorized = handler;
 }
@@ -84,18 +97,29 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
   }
 
   if (!response.ok) {
-    throw new ApiError(response.status, await _detail(response));
+    const { message, code, detail } = await _detail(response);
+    throw new ApiError(response.status, message, code, detail);
   }
 
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }
 
-async function _detail(response: Response): Promise<string> {
+type Detail = { message: string; code?: string; detail?: unknown };
+
+async function _detail(response: Response): Promise<Detail> {
   const body = await response.json().catch(() => null);
-  if (body && typeof body.detail === "string") return body.detail;
-  if (body && body.detail !== undefined) return JSON.stringify(body.detail);
-  return response.statusText || `request failed with status ${response.status}`;
+  if (body && typeof body.detail === "string") return { message: body.detail };
+
+  if (body && body.detail && typeof body.detail === "object") {
+    const structured = body.detail as Record<string, unknown>;
+    const message = typeof structured.message === "string" ? structured.message : JSON.stringify(structured);
+    const code = typeof structured.code === "string" ? structured.code : undefined;
+    return { message, code, detail: structured };
+  }
+
+  if (body && body.detail !== undefined) return { message: JSON.stringify(body.detail) };
+  return { message: response.statusText || `request failed with status ${response.status}` };
 }
 
 /**

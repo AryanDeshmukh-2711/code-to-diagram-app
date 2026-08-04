@@ -56,6 +56,8 @@ const SAMPLE_EXPORT: ExportResult = {
   url: "/exports/exp_demo/download?token=demo",
   bytes: 184_320,
   error: null,
+  watermarked: true,
+  tier: "free",
 };
 
 async function* typewriter(sentence: string): AsyncIterable<string> {

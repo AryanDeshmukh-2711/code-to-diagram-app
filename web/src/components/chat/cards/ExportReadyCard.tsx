@@ -31,7 +31,7 @@ export function ExportReadyCard({ export: result }: ExportReadyCardProps) {
           </Badge>
         </div>
       </CardHeader>
-      <CardContent className="text-sm text-muted-foreground">
+      <CardContent className="space-y-1 text-sm text-muted-foreground">
         {result.status === "failed" ? (
           <p className="text-destructive">{result.error ?? "The export failed."}</p>
         ) : result.status === "succeeded" ? (
@@ -39,6 +39,12 @@ export function ExportReadyCard({ export: result }: ExportReadyCardProps) {
         ) : (
           <p>Assembling the document — this only takes a moment.</p>
         )}
+        {result.watermarked ? (
+          <p>
+            This document carries a watermark
+            {result.tier ? ` on the ${result.tier} tier` : ""}.
+          </p>
+        ) : null}
       </CardContent>
       {result.status === "succeeded" && result.url ? (
         <CardFooter>
