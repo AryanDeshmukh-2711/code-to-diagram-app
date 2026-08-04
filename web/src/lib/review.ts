@@ -1,6 +1,5 @@
+import { apiFetch, ApiError } from "@/lib/client";
 import type { CPM } from "@/lib/cpm.generated";
-
-const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
 /** A draft is a CPM whose references may not resolve yet — that is the point
  * of the review screen. Reusing the generated CPM type keeps the shape honest;
@@ -47,46 +46,46 @@ export type Edit =
 
 export class ReviewRefused extends Error {}
 
-async function unwrap(response: Response) {
-  if (response.ok) return response.json();
-  const body = await response.json().catch(() => ({ detail: response.statusText }));
-  // 409 and 422 are the server refusing an edit or a confirmation — both are
-  // messages for the user, not faults to log and hide.
-  throw new ReviewRefused(body.detail ?? "Something went wrong.");
+/** review.py's own refusals (404 no draft, 409 an edit that fails validation,
+ * 422 not confirmable) are all messages meant for the user, not faults to log
+ * and hide — so every ApiError from this module surfaces as one. */
+async function asReview<T>(promise: Promise<T>): Promise<T> {
+  try {
+    return await promise;
+  } catch (error) {
+    if (error instanceof ApiError) throw new ReviewRefused(error.message);
+    throw error;
+  }
 }
 
-const json = { "content-type": "application/json" };
-
 export async function loadReview(projectId: string): Promise<Review> {
-  return unwrap(await fetch(`${API}/projects/${projectId}/review`, { cache: "no-store" }));
+  return asReview(apiFetch<Review>(`/projects/${projectId}/review`));
 }
 
 export async function seedReview(projectId: string, projectName: string): Promise<Review> {
-  return unwrap(
-    await fetch(`${API}/projects/${projectId}/review/seed`, {
+  return asReview(
+    apiFetch<Review>(`/projects/${projectId}/review/seed`, {
       method: "POST",
-      headers: json,
-      body: JSON.stringify({ projectName }),
+      body: { projectName },
     }),
   );
 }
 
 export async function applyEdit(projectId: string, edit: Edit): Promise<Review> {
-  return unwrap(
-    await fetch(`${API}/projects/${projectId}/review/edit`, {
-      method: "POST",
-      headers: json,
-      body: JSON.stringify(edit),
-    }),
+  return asReview(
+    apiFetch<Review>(`/projects/${projectId}/review/edit`, { method: "POST", body: edit }),
   );
 }
 
 export async function confirmReview(
   projectId: string,
 ): Promise<{ versionId: string; version: number; confirmedAt: string }> {
-  return unwrap(
-    await fetch(`${API}/projects/${projectId}/review/confirm`, { method: "POST" }),
-  );
+  // No body, matching the server's own distinction: a confirm sent with no
+  // review-signals payload is not attributed to an account in the funnel
+  // event (see review.py's confirm()) — a later prompt wires the signals
+  // this screen already tracks (lastEdit, referencesUpdated) into a real
+  // ConfirmIn body.
+  return asReview(apiFetch(`/projects/${projectId}/review/confirm`, { method: "POST" }));
 }
 
 /** Issues that belong to one row, so the message lands next to the field. */
