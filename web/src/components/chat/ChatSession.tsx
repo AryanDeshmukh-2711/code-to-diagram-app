@@ -11,10 +11,22 @@ import { chatEditOutcomeNarration, chatEditProgressNarration } from "@/lib/chatE
 import { ApiError } from "@/lib/client";
 import { extractFromPdf, extractFromText, streamExtraction, type Extraction } from "@/lib/extraction";
 import { looksLikeGenerateRequest } from "@/lib/generateIntent";
+import { historyNarration } from "@/lib/historyNarration";
+import { looksLikeHistoryRequest } from "@/lib/historyIntent";
 import { extractionOutcomeNarration, extractionProgressNarration } from "@/lib/narration";
 import { confirmReview, loadReview, type Review, ReviewRefused } from "@/lib/review";
+import { regeneratePlanNarration } from "@/lib/regenerateNarration";
+import { looksLikeRegenerateRequest } from "@/lib/regenerateIntent";
 import { runOutcomeNarration, runProgressNarration } from "@/lib/runNarration";
-import { type Run, startRun, streamRun } from "@/lib/runs";
+import {
+  getRun,
+  regenerate,
+  runHistory,
+  type Run,
+  type RegenerateResult,
+  startRun,
+  streamRun,
+} from "@/lib/runs";
 
 function newId(): string {
   return typeof crypto !== "undefined" && crypto.randomUUID
@@ -37,16 +49,18 @@ type PendingClarification = {
 
 /**
  * Wires the composer to real extraction (P-M6-1), real chat edit-intent
- * parsing (P-M6-2), the confirm gate (P-M6-7), and diagram generation
- * (P-M6-8).
+ * parsing (P-M6-2), the confirm gate (P-M6-7), diagram generation (P-M6-8),
+ * and regeneration + lineage (P-M6-9).
  *
  * Everything narrated here comes straight off the row the backend returns
- * for whichever job is in flight: lib/narration.ts, lib/chatEditNarration.ts
- * and lib/runNarration.ts are the only things that turn a row into a
- * sentence, and none of them invent detail the row does not carry (FR-9,
- * C-3, FR-10/11/12/20). A partial run failure names exactly which diagram
- * failed and why, with every other diagram still counted ready — there is no
- * path here that collapses that into "Done!".
+ * for whichever job is in flight: lib/narration.ts, lib/chatEditNarration.ts,
+ * lib/runNarration.ts and lib/regenerateNarration.ts are the only things
+ * that turn a row into a sentence, and none of them invent detail the row
+ * does not carry (FR-9, C-3, FR-10/11/12/20). A partial run failure names
+ * exactly which diagram failed and why; a no-op regeneration shows the
+ * plan's own `reason` completely unedited, and — because that decision is
+ * synchronous — never after a "regenerating…" message that would have been
+ * a lie the moment it appeared.
  *
  * A clarifying question is answered, not restarted: while
  * `pendingClarification` is set, the next message sent is not the user's
@@ -62,10 +76,13 @@ type PendingClarification = {
  * has no confirm-shaped op to recognise it as, pinned by
  * shared/tests/test_confirm_is_not_chat_parseable.py.
  *
- * "Generate the diagrams" is recognised the same deliberate way "attach" is
- * (P-M6-4): a small local check (lib/generateIntent.ts) before a message
- * ever reaches the edit-intent parser, never a fifteenth op added to that
- * parser's vocabulary.
+ * "Generate the diagrams", "redraw the class diagram" and "what have I
+ * changed?" are each recognised the same deliberate way "attach" is
+ * (P-M6-4): a small local check (lib/generateIntent.ts,
+ * lib/regenerateIntent.ts, lib/historyIntent.ts) before a message ever
+ * reaches the edit-intent parser, never new ops added to that parser's
+ * vocabulary. Nothing here offers a way to make an unchanged diagram redraw
+ * anyway — a structural test in this module's lib/ directory pins that.
  */
 export function ChatSession({ projectId }: { projectId: string }) {
   const [messages, setMessages] = useState<ChatMessage[]>(() => [
@@ -86,6 +103,7 @@ export function ChatSession({ projectId }: { projectId: string }) {
   const [latestConfirmedVersion, setLatestConfirmedVersion] = useState<ConfirmedVersion | null>(
     null,
   );
+  const [latestRunId, setLatestRunId] = useState<string | null>(null);
   const activeStream = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -128,10 +146,34 @@ export function ChatSession({ projectId }: { projectId: string }) {
     });
   }
 
-  /** POST /runs, and a live diagram-progress card fed by the same SSE
-   * mechanism run progress has always streamed through (C-4). Called both
-   * right after a successful confirm and from a "generate the diagrams"
-   * follow-up — the same action, two ways to reach it. */
+  /** Posts a diagram-progress card for an already-started run and follows it
+   * to completion over SSE (C-4) — shared by a fresh generation and a
+   * regeneration's child run, so there is exactly one place that turns a Run
+   * into a card and one place that decides when it is finished. */
+  function trackRun(run: Run, narrationId: string) {
+    setLatestRunId(run.runId);
+    const cardId = newId();
+    append({ id: cardId, role: "assistant", kind: "diagram-progress", run, at: new Date().toISOString() });
+    updateNarration(narrationId, runProgressNarration(run));
+
+    activeStream.current = streamRun(run.runId, (snapshot) => {
+      updateRun(cardId, snapshot);
+
+      if (snapshot.status === "pending" || snapshot.status === "running") {
+        updateNarration(narrationId, runProgressNarration(snapshot));
+        return;
+      }
+
+      // A partial failure is reported as one, in full — see runNarration.ts.
+      updateNarration(narrationId, runOutcomeNarration(snapshot));
+      activeStream.current = null;
+      setBusy(false);
+    });
+  }
+
+  /** POST /runs. Called both right after a successful confirm and from a
+   * "generate the diagrams" follow-up — the same action, two ways to reach
+   * it. */
   async function runDiagramGeneration(cpmVersionId: string) {
     const narrationId = newId();
     append({
@@ -156,23 +198,103 @@ export function ChatSession({ projectId }: { projectId: string }) {
       return;
     }
 
-    const cardId = newId();
-    append({ id: cardId, role: "assistant", kind: "diagram-progress", run, at: new Date().toISOString() });
-    updateNarration(narrationId, runProgressNarration(run));
+    trackRun(run, narrationId);
+  }
 
-    activeStream.current = streamRun(run.runId, (snapshot) => {
-      updateRun(cardId, snapshot);
+  /** "Redraw the class diagram" -> POST /runs/{id}/regenerate. The plan
+   * comes back synchronously either way, so the narration it produces is the
+   * first and only thing said before anything that might actually be a
+   * no-op — never a spinner shown ahead of an answer already known. */
+  async function onRegenerateDiagram(diagramType: string) {
+    if (!latestRunId) {
+      append({
+        id: newId(),
+        role: "assistant",
+        kind: "narration",
+        source: "Nothing's been generated yet — generate the diagrams first.",
+        at: new Date().toISOString(),
+      });
+      return;
+    }
 
-      if (snapshot.status === "pending" || snapshot.status === "running") {
-        updateNarration(narrationId, runProgressNarration(snapshot));
-        return;
-      }
+    setBusy(true);
 
-      // A partial failure is reported as one, in full — see runNarration.ts.
-      updateNarration(narrationId, runOutcomeNarration(snapshot));
-      activeStream.current = null;
+    let plan: RegenerateResult;
+    try {
+      plan = await regenerate(latestRunId, { diagramType });
+    } catch (error) {
+      append({
+        id: newId(),
+        role: "assistant",
+        kind: "narration",
+        source:
+          error instanceof ApiError ? error.message : "Something went wrong regenerating that.",
+        at: new Date().toISOString(),
+      });
       setBusy(false);
+      return;
+    }
+
+    const narrationId = newId();
+    append({
+      id: narrationId,
+      role: "assistant",
+      kind: "narration",
+      source: regeneratePlanNarration(plan),
+      at: new Date().toISOString(),
     });
+
+    if (!plan.changed || !plan.runId) {
+      // The plan itself is the whole story on a no-op — nothing to track.
+      setBusy(false);
+      return;
+    }
+
+    try {
+      const run = await getRun(plan.runId);
+      trackRun(run, narrationId);
+    } catch (error) {
+      updateNarration(
+        narrationId,
+        error instanceof ApiError ? error.message : "Something went wrong fetching that run.",
+      );
+      setBusy(false);
+    }
+  }
+
+  /** "What have I changed?" -> GET /runs/{id}/history, read back in the same
+   * oldest-first order the backend already returns it in. */
+  async function onShowHistory() {
+    if (!latestRunId) {
+      append({
+        id: newId(),
+        role: "assistant",
+        kind: "narration",
+        source: "Nothing's been generated yet, so there's no history.",
+        at: new Date().toISOString(),
+      });
+      return;
+    }
+
+    try {
+      const entries = await runHistory(latestRunId);
+      append({
+        id: newId(),
+        role: "assistant",
+        kind: "narration",
+        source: historyNarration(entries),
+        at: new Date().toISOString(),
+      });
+    } catch (error) {
+      append({
+        id: newId(),
+        role: "assistant",
+        kind: "narration",
+        source:
+          error instanceof ApiError ? error.message : "Something went wrong fetching the history.",
+        at: new Date().toISOString(),
+      });
+    }
   }
 
   async function onConfirmProject(messageId: string, review: Review) {
@@ -227,6 +349,17 @@ export function ChatSession({ projectId }: { projectId: string }) {
         return;
       }
       void runDiagramGeneration(latestConfirmedVersion.versionId);
+      return;
+    }
+
+    const regenerateRequest = looksLikeRegenerateRequest(text);
+    if (regenerateRequest) {
+      void onRegenerateDiagram(regenerateRequest.diagramType);
+      return;
+    }
+
+    if (looksLikeHistoryRequest(text)) {
+      void onShowHistory();
       return;
     }
 
