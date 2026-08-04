@@ -51,10 +51,23 @@ export type AssistantNarrationMessage = BaseMessage & {
   source: NarrationSource;
 };
 
+/** What POST .../review/confirm returns. Named here once so the card, the
+ * message type, and the session's "last confirmed version" all mean the
+ * same shape. */
+export type ConfirmedVersion = {
+  versionId: string;
+  version: number;
+};
+
 export type ReviewSummaryMessage = BaseMessage & {
   role: "assistant";
   kind: "review-summary";
   review: Review;
+  /** Set once this exact card has been confirmed. Confirming is a button
+   * click on one specific card, never something chat text can trigger
+   * (FR-6/FR-7) — see Composer/ChatSession, which have no path from a typed
+   * message to this field. */
+  confirmedVersion?: ConfirmedVersion | null;
 };
 
 export type DiagramProgressMessage = BaseMessage & {

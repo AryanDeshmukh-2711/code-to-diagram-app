@@ -5,13 +5,13 @@ import { useEffect, useRef, useState } from "react";
 import type { Attachment } from "@/components/chat/Composer";
 import { Composer } from "@/components/chat/Composer";
 import { MessageList } from "@/components/chat/MessageList";
-import type { ChatMessage } from "@/components/chat/types";
+import type { ChatMessage, ConfirmedVersion } from "@/components/chat/types";
 import { type ChatEdit, sendChatMessage, streamChatEdit } from "@/lib/chat";
 import { chatEditOutcomeNarration, chatEditProgressNarration } from "@/lib/chatEditNarration";
 import { ApiError } from "@/lib/client";
 import { extractFromPdf, extractFromText, streamExtraction, type Extraction } from "@/lib/extraction";
 import { extractionOutcomeNarration, extractionProgressNarration } from "@/lib/narration";
-import { loadReview } from "@/lib/review";
+import { confirmReview, loadReview, type Review, ReviewRefused } from "@/lib/review";
 
 function newId(): string {
   return typeof crypto !== "undefined" && crypto.randomUUID
@@ -33,8 +33,8 @@ type PendingClarification = {
 };
 
 /**
- * Wires the composer to real extraction (P-M6-1) and real chat edit-intent
- * parsing (P-M6-2).
+ * Wires the composer to real extraction (P-M6-1), real chat edit-intent
+ * parsing (P-M6-2), and the confirm gate (P-M6-7).
  *
  * Everything narrated here comes straight off the ExtractionRow or
  * ChatEditRow the backend returns: lib/narration.ts and
@@ -49,6 +49,14 @@ type PendingClarification = {
  * raw reply but that reply appended to the whole exchange so far, so the
  * single-message parser (P-M6-2 has no conversation history of its own) has
  * enough context to resolve what "it" or "the second one" meant.
+ *
+ * Confirming is FR-6/FR-7's one non-negotiable: `onConfirmProject` is wired
+ * to exactly one control, the confirm button `MessageList` renders inside a
+ * review-summary card (see ReviewSummaryCard's own docstring). Nothing in
+ * `onSend` can reach it — a typed "yes" is sent to the same parser
+ * `sendChatMessage` always uses, whose vocabulary (shared/chat/intent.py)
+ * has no confirm-shaped op to recognise it as, pinned by
+ * shared/tests/test_confirm_is_not_chat_parseable.py.
  */
 export function ChatSession({ projectId }: { projectId: string }) {
   const [messages, setMessages] = useState<ChatMessage[]>(() => [
@@ -63,6 +71,10 @@ export function ChatSession({ projectId }: { projectId: string }) {
   ]);
   const [busy, setBusy] = useState(false);
   const [pendingClarification, setPendingClarification] = useState<PendingClarification | null>(
+    null,
+  );
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [latestConfirmedVersion, setLatestConfirmedVersion] = useState<ConfirmedVersion | null>(
     null,
   );
   const activeStream = useRef<(() => void) | null>(null);
@@ -81,6 +93,56 @@ export function ChatSession({ projectId }: { projectId: string }) {
         message.id === id && message.kind === "narration" ? { ...message, source } : message,
       ),
     );
+  }
+
+  /** Re-fetches the live review state and posts a fresh card. Called after
+   * every mutation (a successful extraction, a successful chat edit) so the
+   * confirm button on the newest card is always gated by a `confirmable`
+   * value fetched after that mutation, never a snapshot an edit since made
+   * stale. */
+  async function postReviewCard() {
+    const review = await loadReview(projectId);
+    append({
+      id: newId(),
+      role: "assistant",
+      kind: "review-summary",
+      review,
+      at: new Date().toISOString(),
+    });
+  }
+
+  async function onConfirmProject(messageId: string, review: Review) {
+    setConfirmingId(messageId);
+    try {
+      const result = await confirmReview(projectId);
+      const version: ConfirmedVersion = { versionId: result.versionId, version: result.version };
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === messageId && message.kind === "review-summary"
+            ? { ...message, confirmedVersion: version }
+            : message,
+        ),
+      );
+      setLatestConfirmedVersion(version);
+      append({
+        id: newId(),
+        role: "assistant",
+        kind: "narration",
+        source: `Confirmed “${review.projectName}” as version ${version.version} (${version.versionId}).`,
+        at: new Date().toISOString(),
+      });
+    } catch (error) {
+      append({
+        id: newId(),
+        role: "assistant",
+        kind: "narration",
+        source:
+          error instanceof ReviewRefused ? error.message : "Something went wrong confirming that.",
+        at: new Date().toISOString(),
+      });
+    } finally {
+      setConfirmingId(null);
+    }
   }
 
   async function onSend(text: string) {
@@ -132,6 +194,10 @@ export function ChatSession({ projectId }: { projectId: string }) {
           ? { contextText: messageToSend, question: snapshot.clarifyQuestion ?? "" }
           : null,
       );
+
+      if (snapshot.outcome === "applied") {
+        void postReviewCard();
+      }
     });
   }
 
@@ -188,23 +254,20 @@ export function ChatSession({ projectId }: { projectId: string }) {
       setBusy(false);
 
       if (snapshot.status === "succeeded" && snapshot.outcome === "extracted") {
-        void loadReview(projectId).then((review) => {
-          append({
-            id: newId(),
-            role: "assistant",
-            kind: "review-summary",
-            review,
-            at: new Date().toISOString(),
-          });
-        });
+        void postReviewCard();
       }
     });
   }
 
   return (
     <main className="mx-auto flex h-screen max-w-2xl flex-col">
+      {latestConfirmedVersion ? (
+        <div className="border-b border-border bg-muted/40 px-4 py-1.5 text-center text-xs text-muted-foreground">
+          Latest confirmed version: v{latestConfirmedVersion.version} ({latestConfirmedVersion.versionId})
+        </div>
+      ) : null}
       <div className="flex-1 overflow-hidden">
-        <MessageList messages={messages} />
+        <MessageList messages={messages} onConfirm={onConfirmProject} confirmingId={confirmingId} />
       </div>
       <Composer onSend={onSend} onAttach={onAttach} busy={busy} />
     </main>
