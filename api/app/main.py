@@ -43,6 +43,7 @@ def create_app() -> FastAPI:
     app.include_router(chat.router)
     app.include_router(runs.router)
     app.include_router(exports.router)
+    app.include_router(exports.templates_router)
     app.include_router(exports.artefact_router)
     app.include_router(exports.metrics_router)
     return app

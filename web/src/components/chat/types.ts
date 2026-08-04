@@ -1,5 +1,5 @@
 import type { NarrationSource } from "@/components/chat/StreamingText";
-import type { ExportResult } from "@/lib/exports";
+import type { ExportResult, TemplateSummary } from "@/lib/exports";
 import type { Review } from "@/lib/review";
 import type { Run } from "@/lib/runs";
 
@@ -18,6 +18,8 @@ export type ChatMessage =
   | AssistantNarrationMessage
   | ReviewSummaryMessage
   | DiagramProgressMessage
+  | ExportSetupMessage
+  | NeedsPngMessage
   | ExportReadyMessage;
 
 type BaseMessage = {
@@ -74,6 +76,34 @@ export type DiagramProgressMessage = BaseMessage & {
   role: "assistant";
   kind: "diagram-progress";
   run: Run;
+};
+
+/** Format is already known by the time this renders — collected
+ * conversationally before the card ever appears. What is left to collect is
+ * the template (skipped as a choice when the tier allows only one) and that
+ * template's own required fields (FR-15). Submit never fires
+ * `POST .../export` until every one of them is filled — see
+ * ExportSetupCard's own docstring. */
+export type ExportSetupMessage = BaseMessage & {
+  role: "assistant";
+  kind: "export-setup";
+  runId: string;
+  cpmVersionId: string;
+  format: "pdf" | "docx";
+  templates: TemplateSummary[];
+  /** Set once this card's Submit has fired, so a stale card cannot start a
+   * second export after the flow has moved on. */
+  submitted: boolean;
+};
+
+/** DOCX requested for a run only ever rendered as SVG. `message` is the
+ * API's own `needs_png` guidance, shown verbatim — see exportNarration.ts's
+ * docstring for why this module writes none of its own copy for it. */
+export type NeedsPngMessage = BaseMessage & {
+  role: "assistant";
+  kind: "needs-png";
+  message: string;
+  cpmVersionId: string;
 };
 
 export type ExportReadyMessage = BaseMessage & {

@@ -540,13 +540,33 @@ def _svg_drawing(payload: bytes):
     try:
         from svglib.svglib import svg2rlg
 
-        return svg2rlg(io.BytesIO(payload))
+        drawing = svg2rlg(io.BytesIO(payload))
+        if drawing is not None:
+            _sanitize_dash_arrays(drawing)
+        return drawing
     except Exception as exc:  # pragma: no cover - depends on the SVG in hand
         # A warning, not an exception log: this is a handled condition with a
         # raster fallback right behind it, and a twenty-line traceback above an
         # otherwise clean run reads as a crash.
         logger.warning("svglib could not convert an SVG figure: %s: %s", type(exc).__name__, exc)
         return None
+
+
+def _sanitize_dash_arrays(node) -> None:
+    """svg2rlg carries an SVG `stroke-dasharray="0"` (the spec's own way of
+    saying "solid line") through as a literal `[0.0, 0.0]` pattern. reportlab's
+    canvas.setDash refuses a dash cycle of zero length and raises at draw
+    time — deep inside multiBuild, long after conversion already returned a
+    drawing, so `_svg_drawing`'s own except never sees it. Clearing a
+    degenerate dash array here is not a guess at what to draw instead: a
+    zero-length dash pattern *is* a solid line, by the SVG spec's own
+    definition.
+    """
+    dash = getattr(node, "strokeDashArray", None)
+    if dash and all(not value for value in dash):
+        node.strokeDashArray = None
+    for child in getattr(node, "contents", ()):
+        _sanitize_dash_arrays(child)
 
 
 CAPTION_ALLOWANCE = 40.0

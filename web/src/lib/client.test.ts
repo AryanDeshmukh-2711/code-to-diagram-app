@@ -92,7 +92,7 @@ describe("apiFetch: other failures", () => {
     expect((error as ApiError).message).toBe("No entity with id 'x' exists.");
   });
 
-  it("stringifies a structured detail rather than dropping it", async () => {
+  it("splits a structured detail into code and message rather than dropping either", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
@@ -102,7 +102,28 @@ describe("apiFetch: other failures", () => {
 
     const error = await apiFetch("/runs/r1/export").catch((e) => e);
     expect(error).toBeInstanceOf(ApiError);
-    expect((error as ApiError).message).toContain("needs_png");
+    expect((error as ApiError).code).toBe("needs_png");
+    expect((error as ApiError).message).toBe("generate a PNG first");
+  });
+
+  it("carries the full structured detail for callers that need more than code/message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(409, {
+          detail: {
+            code: "missing_fields",
+            message: "template 'course-hand-in' needs values for: course_code",
+            missing: ["course_code (Course code)"],
+          },
+        }),
+      ),
+    );
+
+    const error = await apiFetch("/runs/r1/export").catch((e) => e);
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).code).toBe("missing_fields");
+    expect((error as ApiError).detail).toMatchObject({ missing: ["course_code (Course code)"] });
   });
 });
 

@@ -336,6 +336,7 @@ def test_every_run_and_project_route_proves_ownership() -> None:
                     "_load",
                     "check_new",
                     "account_id",
+                    "account_tier",
                 )
             ):
                 unguarded.append(f"{name}:{node.name} never checks ownership")
