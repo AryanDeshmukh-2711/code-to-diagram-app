@@ -45,8 +45,11 @@ const defaultUnauthorized: Unauthorized = () => {
 
 let onUnauthorized: Unauthorized = defaultUnauthorized;
 
-/** Swaps the 401 handler. Only real caller is tests — production code never
- * needs a second way to react to a session going bad. */
+/** Swaps the 401 handler. Most callers are tests, but ChatSession is a real
+ * production one (P-M6-11): the default's hard redirect is exactly the
+ * silently-abandoned conversation a 401 mid-chat must not cause, so it
+ * overrides this for as long as it is mounted and restores the default on
+ * unmount. */
 export function _setUnauthorizedHandler(handler: Unauthorized): void {
   onUnauthorized = handler;
 }

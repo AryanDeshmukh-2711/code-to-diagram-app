@@ -1,5 +1,6 @@
 import type { NarrationSource } from "@/components/chat/StreamingText";
 import type { ExportResult, TemplateSummary } from "@/lib/exports";
+import type { QuotaRefusal } from "@/lib/quota";
 import type { Review } from "@/lib/review";
 import type { Run } from "@/lib/runs";
 
@@ -20,7 +21,9 @@ export type ChatMessage =
   | DiagramProgressMessage
   | ExportSetupMessage
   | NeedsPngMessage
-  | ExportReadyMessage;
+  | ExportReadyMessage
+  | QuotaRefusalMessage
+  | SessionExpiredMessage;
 
 type BaseMessage = {
   id: string;
@@ -110,4 +113,22 @@ export type ExportReadyMessage = BaseMessage & {
   role: "assistant";
   kind: "export-ready";
   export: ExportResult;
+};
+
+/** A 402. `refusal` is `billing/quota.py`'s own `QuotaRefusal` — no rule ID
+ * attaches to this step, but see lib/quota.ts's docstring for the principle
+ * that does. */
+export type QuotaRefusalMessage = BaseMessage & {
+  role: "assistant";
+  kind: "quota-refusal";
+  refusal: QuotaRefusal;
+};
+
+/** A 401. Never text glued into a narration bubble — see
+ * SessionExpiredCard's own docstring for why the transcript above this stays
+ * intact rather than the app silently navigating away. */
+export type SessionExpiredMessage = BaseMessage & {
+  role: "assistant";
+  kind: "session-expired";
+  returnTo: string;
 };
