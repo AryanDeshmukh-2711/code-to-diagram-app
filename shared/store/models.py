@@ -118,6 +118,12 @@ class ExtractionRow(Base):
     input_kind: Mapped[str] = mapped_column(String(8), nullable=False)
     """"text" or "pdf" — what the caller sent, not how it was interpreted."""
 
+    project_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    """What the caller asked to call this project, if anything. Null on an
+    empty request field, not the project id — `run_extraction` is the one
+    place that falls back to the id, and only once this, an existing draft's
+    name, are both unavailable."""
+
     source_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_pdf: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     """Raw bytes, kept only long enough for the worker to run

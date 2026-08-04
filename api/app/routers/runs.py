@@ -15,6 +15,7 @@ from analytics import events
 from arq import create_pool
 from arq.connections import RedisSettings
 from billing.quota import QuotaExceeded, check_new_run, check_template
+from billing.tiers import get_tier
 from diagrams.registry import registered_types
 from diagrams.types import RenderFormat
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -291,9 +292,21 @@ async def regenerate(
         return out
 
     child_id = await create_regeneration_run(plan, template_id=None)
+
+    async with SessionFactory() as session:
+        parent = await session.get(GenerationRunRow, run_id)
+    # Same queue the parent run itself used: a regeneration is not a fresh
+    # entitlement decision, it inherits the run it is redrawing from.
+    tier = get_tier(parent.tier if parent and parent.tier else "free")
+
     pool = await create_pool(RedisSettings.from_dsn(get_settings().redis_url))
     try:
-        await pool.enqueue_job("regenerate_diagram", child_id, _job_id=f"regen:{child_id}")
+        await pool.enqueue_job(
+            "regenerate_diagram",
+            child_id,
+            _job_id=f"regen:{child_id}",
+            _queue_name=f"arq:{tier.queue}",
+        )
     finally:
         await pool.aclose()
 

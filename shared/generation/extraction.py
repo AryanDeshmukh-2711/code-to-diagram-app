@@ -42,7 +42,11 @@ class ExtractionOutcome:
     error: str | None = None
 
 
-async def run_extraction(extraction_id: str, session_factory=SessionFactory) -> ExtractionOutcome:
+async def run_extraction(
+    extraction_id: str,
+    session_factory=SessionFactory,
+    service: ExtractionService | None = None,
+) -> ExtractionOutcome:
     started = datetime.now(UTC)
 
     async with session_factory() as session:
@@ -61,16 +65,19 @@ async def run_extraction(extraction_id: str, session_factory=SessionFactory) -> 
             )
 
         project_id = row.project_id
-        project_name = None  # resolved below, from CPMDraftRow if one exists
+        project_name = row.project_name  # what the caller asked to call this, if anything
         text = row.source_text
         pdf_bytes = row.source_pdf
 
         row.status = "running"
         await session.commit()
 
-        existing_draft = await session.get(CPMDraftRow, project_id)
-        if existing_draft is not None:
-            project_name = existing_draft.project_name
+        if project_name is None:
+            # Nothing was asked for at request time -- an existing draft's
+            # established name outlives a re-extraction that did not rename it.
+            existing_draft = await session.get(CPMDraftRow, project_id)
+            if existing_draft is not None:
+                project_name = existing_draft.project_name
 
     status = "succeeded"
     outcome: str | None = None
@@ -85,8 +92,8 @@ async def run_extraction(extraction_id: str, session_factory=SessionFactory) -> 
         if not text or not text.strip():
             raise ValueError("no text could be extracted from the upload")
 
-        service = ExtractionService(build_default_gateway())
-        result = await service.extract(
+        extraction_service = service or ExtractionService(build_default_gateway())
+        result = await extraction_service.extract(
             text,
             project_name=project_name or project_id,
             user_id=row.account_id,

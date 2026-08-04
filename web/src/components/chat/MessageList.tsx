@@ -8,12 +8,19 @@ import { DiagramProgressCard } from "@/components/chat/cards/DiagramProgressCard
 import { ExportReadyCard } from "@/components/chat/cards/ExportReadyCard";
 import { ReviewSummaryCard } from "@/components/chat/cards/ReviewSummaryCard";
 import { StreamingText } from "@/components/chat/StreamingText";
+import type { Review } from "@/lib/review";
 
 export type MessageListProps = {
   messages: ChatMessage[];
+  /** Wired to exactly one control: the confirm button inside a
+   * review-summary card. Omit entirely and no message in the list can ever
+   * confirm anything — that is how the sandbox stays confirm-free without a
+   * separate code path (FR-6/FR-7). */
+  onConfirm?: (messageId: string, review: Review) => void;
+  confirmingId?: string | null;
 };
 
-export function MessageList({ messages }: MessageListProps) {
+export function MessageList({ messages, onConfirm, confirmingId = null }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -23,23 +30,39 @@ export function MessageList({ messages }: MessageListProps) {
   return (
     <div className="flex flex-col gap-4 overflow-y-auto p-4" role="log" aria-live="polite">
       {messages.map((message) => (
-        <MessageRow key={message.id} message={message} />
+        <MessageRow key={message.id} message={message} onConfirm={onConfirm} confirmingId={confirmingId} />
       ))}
       <div ref={bottomRef} />
     </div>
   );
 }
 
-function MessageRow({ message }: { message: ChatMessage }) {
+function MessageRow({
+  message,
+  onConfirm,
+  confirmingId,
+}: {
+  message: ChatMessage;
+  onConfirm?: (messageId: string, review: Review) => void;
+  confirmingId: string | null;
+}) {
   const isUser = message.role === "user";
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
-      <MessageContent message={message} />
+      <MessageContent message={message} onConfirm={onConfirm} confirmingId={confirmingId} />
     </div>
   );
 }
 
-function MessageContent({ message }: { message: ChatMessage }) {
+function MessageContent({
+  message,
+  onConfirm,
+  confirmingId,
+}: {
+  message: ChatMessage;
+  onConfirm?: (messageId: string, review: Review) => void;
+  confirmingId: string | null;
+}) {
   switch (message.kind) {
     case "text":
       return (
@@ -68,7 +91,14 @@ function MessageContent({ message }: { message: ChatMessage }) {
       );
 
     case "review-summary":
-      return <ReviewSummaryCard review={message.review} />;
+      return (
+        <ReviewSummaryCard
+          review={message.review}
+          confirmedVersion={message.confirmedVersion}
+          confirming={confirmingId === message.id}
+          onConfirm={onConfirm ? () => onConfirm(message.id, message.review) : undefined}
+        />
+      );
 
     case "diagram-progress":
       return <DiagramProgressCard run={message.run} />;
