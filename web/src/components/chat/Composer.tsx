@@ -163,7 +163,7 @@ export function Composer({ onSend, onAttach, busy = false }: ComposerProps) {
               type="button"
               size="sm"
               onClick={submitAttach}
-              disabled={!stagedFile && !attachText.trim()}
+              disabled={busy || (!stagedFile && !attachText.trim())}
             >
               Attach project
             </Button>

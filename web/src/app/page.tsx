@@ -21,16 +21,22 @@ export default function Home() {
 
   if (!checked) return null;
 
+  const newProjectId = `proj_${Math.random().toString(36).slice(2, 10)}`;
+
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col justify-center gap-4 p-8">
       <h1 className="text-2xl font-semibold tracking-tight">AI Software Architect</h1>
       <p className="text-sm text-muted-foreground">
-        Signed in. Dropping a description or a PDF and turning it into a reviewable model lands
-        in a later step — for now, the sample project shows the review screen working end to end.
+        Drop a PDF or paste a description and I&apos;ll turn it into a reviewable model.
       </p>
-      <Button asChild className="w-fit">
-        <Link href="/review/demo">Open the sample project</Link>
-      </Button>
+      <div className="flex flex-wrap gap-3">
+        <Button asChild className="w-fit">
+          <Link href={`/projects/${newProjectId}/chat`}>Start a new project</Link>
+        </Button>
+        <Button asChild variant="outline" className="w-fit">
+          <Link href="/review/demo">Open the sample project</Link>
+        </Button>
+      </div>
     </main>
   );
 }

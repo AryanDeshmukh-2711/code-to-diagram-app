@@ -112,6 +112,7 @@ async def start_extraction(
             project_id=project_id,
             account_id=account,
             input_kind="pdf" if pdf_bytes is not None else "text",
+            project_name=projectName.strip() or None,
             source_text=text,
             source_pdf=pdf_bytes,
             status="pending",
