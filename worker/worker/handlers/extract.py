@@ -1,8 +1,10 @@
 """Stage 1: normalised input -> CPM. The worker's half of C-4.
 
-The ONLY stage permitted to call the LLM, and only via the LLM Gateway.
-Everything downstream renders from the CPM this produces. The API's half
-writes an `ExtractionRow` and enqueues; this is where the model actually runs.
+One of two stages permitted to call the LLM (the other is `parse_chat_edit`),
+and only via the LLM Gateway. This is the one that builds the CPM itself —
+everything downstream, every diagram and document, renders from what it
+produces. The API's half writes an `ExtractionRow` and enqueues; this is
+where the model actually runs.
 """
 
 import logging

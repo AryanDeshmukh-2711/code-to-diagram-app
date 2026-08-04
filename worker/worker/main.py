@@ -11,6 +11,7 @@ import os
 from typing import Any
 
 from worker.handlers.assemble import assemble_document
+from worker.handlers.chat_edit import parse_chat_edit
 from worker.handlers.export import export_document
 from worker.handlers.extract import extract_cpm
 from worker.handlers.render import regenerate_diagram, render_run
@@ -34,7 +35,14 @@ class WorkerSettings:
     ARQ_QUEUE=arq:priority to serve the priority tier: one queue with a
     priority column would still be first in, first out."""
 
-    functions = [extract_cpm, render_run, regenerate_diagram, export_document, assemble_document]
+    functions = [
+        extract_cpm,
+        parse_chat_edit,
+        render_run,
+        regenerate_diagram,
+        export_document,
+        assemble_document,
+    ]
     redis_settings = get_redis_settings()
     on_startup = startup
     on_shutdown = shutdown
