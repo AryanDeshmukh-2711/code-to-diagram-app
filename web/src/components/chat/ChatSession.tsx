@@ -6,6 +6,8 @@ import type { Attachment } from "@/components/chat/Composer";
 import { Composer } from "@/components/chat/Composer";
 import { MessageList } from "@/components/chat/MessageList";
 import type { ChatMessage } from "@/components/chat/types";
+import { type ChatEdit, sendChatMessage, streamChatEdit } from "@/lib/chat";
+import { chatEditOutcomeNarration, chatEditProgressNarration } from "@/lib/chatEditNarration";
 import { ApiError } from "@/lib/client";
 import { extractFromPdf, extractFromText, streamExtraction, type Extraction } from "@/lib/extraction";
 import { extractionOutcomeNarration, extractionProgressNarration } from "@/lib/narration";
@@ -21,14 +23,32 @@ function pdfProjectName(file: File): string {
   return file.name.replace(/\.pdf$/i, "").trim() || "New project";
 }
 
+type PendingClarification = {
+  /** Everything said so far in this back-and-forth, so the parser sees the
+   * whole exchange rather than just the latest, context-free reply. */
+  contextText: string;
+  /** The parser's own question, restated so the combined message reads as a
+   * real exchange rather than two unrelated sentences stapled together. */
+  question: string;
+};
+
 /**
- * Wires the composer to real extraction (P-M6-1). Everything this component
- * narrates comes straight off the ExtractionRow the backend returns —
- * lib/narration.ts is the only thing that turns that row into a sentence,
- * and it never invents detail the row does not carry (FR-9, Watch For).
+ * Wires the composer to real extraction (P-M6-1) and real chat edit-intent
+ * parsing (P-M6-2).
  *
- * Editing through chat is not wired here — that is P-M6-2's job to connect,
- * in a later step. `onSend` says so rather than pretending to act on it.
+ * Everything narrated here comes straight off the ExtractionRow or
+ * ChatEditRow the backend returns: lib/narration.ts and
+ * lib/chatEditNarration.ts are the only things that turn either row into a
+ * sentence, and neither invents detail the row does not carry (FR-9, C-3,
+ * Watch For). An applied edit's confirmation always carries the backend's
+ * own summary and reference count — there is no path here that produces a
+ * bare "Done!".
+ *
+ * A clarifying question is answered, not restarted: while
+ * `pendingClarification` is set, the next message sent is not the user's
+ * raw reply but that reply appended to the whole exchange so far, so the
+ * single-message parser (P-M6-2 has no conversation history of its own) has
+ * enough context to resolve what "it" or "the second one" meant.
  */
 export function ChatSession({ projectId }: { projectId: string }) {
   const [messages, setMessages] = useState<ChatMessage[]>(() => [
@@ -37,11 +57,14 @@ export function ChatSession({ projectId }: { projectId: string }) {
       role: "assistant",
       kind: "narration",
       source:
-        "Drop a PDF or paste a description to get started — I'll turn it into a model you can review.",
+        "Drop a PDF or paste a description to get started, or tell me what to change in a model already in review.",
       at: new Date().toISOString(),
     },
   ]);
   const [busy, setBusy] = useState(false);
+  const [pendingClarification, setPendingClarification] = useState<PendingClarification | null>(
+    null,
+  );
   const activeStream = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -60,19 +83,61 @@ export function ChatSession({ projectId }: { projectId: string }) {
     );
   }
 
-  function onSend(text: string) {
+  async function onSend(text: string) {
+    // The user sees exactly what they typed; only the message sent to the
+    // parser is enriched with the pending question and its own context.
     append({ id: newId(), role: "user", kind: "text", text, at: new Date().toISOString() });
+
+    const messageToSend = pendingClarification
+      ? `${pendingClarification.contextText}\n\nYou asked: "${pendingClarification.question}"\nMy answer: ${text}`
+      : text;
+
+    const narrationId = newId();
     append({
-      id: newId(),
+      id: narrationId,
       role: "assistant",
       kind: "narration",
-      source:
-        "Editing through chat isn't wired up yet — that lands in a later step. Use the review screen for now.",
+      source: chatEditProgressNarration("pending"),
       at: new Date().toISOString(),
+    });
+
+    setBusy(true);
+
+    let edit: ChatEdit;
+    try {
+      edit = await sendChatMessage(projectId, messageToSend);
+    } catch (error) {
+      updateNarration(
+        narrationId,
+        error instanceof ApiError ? error.message : "Something went wrong sending that.",
+      );
+      setBusy(false);
+      return;
+    }
+
+    updateNarration(narrationId, chatEditProgressNarration(edit.status));
+
+    activeStream.current = streamChatEdit(projectId, edit.editId, (snapshot) => {
+      if (snapshot.status === "pending" || snapshot.status === "running") {
+        updateNarration(narrationId, chatEditProgressNarration(snapshot.status));
+        return;
+      }
+
+      updateNarration(narrationId, chatEditOutcomeNarration(snapshot));
+      activeStream.current = null;
+      setBusy(false);
+
+      setPendingClarification(
+        snapshot.outcome === "clarify"
+          ? { contextText: messageToSend, question: snapshot.clarifyQuestion ?? "" }
+          : null,
+      );
     });
   }
 
   async function onAttach(attachment: Attachment) {
+    setPendingClarification(null); // starting a new project supersedes any open question
+
     const label =
       attachment.kind === "pdf" ? `Attached ${attachment.file.name}` : "Attached a pasted description";
     append({

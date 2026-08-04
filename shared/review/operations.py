@@ -59,7 +59,7 @@ def _new_id(name: str, kind: str) -> str:
 
 
 def rename_entity(draft: CPMDraft, entity_id: str, new_name: str) -> EditOutcome:
-    _require(draft.entities, entity_id, "entity")
+    entity = _require(draft.entities, entity_id, "entity")
     cleaned = " ".join(new_name.split())
     new_id = _new_id(cleaned, "entity")
 
@@ -100,13 +100,13 @@ def rename_entity(draft: CPMDraft, entity_id: str, new_name: str) -> EditOutcome
 
     return EditOutcome(
         draft=CPMDraft.model_validate(data),
-        summary=f"Renamed to “{cleaned}”",
+        summary=f"Renamed “{entity.name}” to “{cleaned}”",
         references_updated=touched,
     )
 
 
 def rename_actor(draft: CPMDraft, actor_id: str, new_name: str) -> EditOutcome:
-    _require(draft.actors, actor_id, "actor")
+    actor = _require(draft.actors, actor_id, "actor")
     cleaned = " ".join(new_name.split())
     new_id = _new_id(cleaned, "actor")
 
@@ -141,13 +141,13 @@ def rename_actor(draft: CPMDraft, actor_id: str, new_name: str) -> EditOutcome:
 
     return EditOutcome(
         draft=CPMDraft.model_validate(data),
-        summary=f"Renamed to “{cleaned}”",
+        summary=f"Renamed “{actor.name}” to “{cleaned}”",
         references_updated=touched,
     )
 
 
 def rename_use_case(draft: CPMDraft, use_case_id: str, new_name: str) -> EditOutcome:
-    _require(draft.use_cases, use_case_id, "use case")
+    use_case = _require(draft.use_cases, use_case_id, "use case")
     cleaned = " ".join(new_name.split())
     new_id = _new_id(cleaned, "use case")
 
@@ -160,7 +160,9 @@ def rename_use_case(draft: CPMDraft, use_case_id: str, new_name: str) -> EditOut
             item["id"] = new_id
             item["name"] = cleaned
 
-    return EditOutcome(draft=CPMDraft.model_validate(data), summary=f"Renamed to “{cleaned}”")
+    return EditOutcome(
+        draft=CPMDraft.model_validate(data), summary=f"Renamed “{use_case.name}” to “{cleaned}”"
+    )
 
 
 # --------------------------------------------------------------------------
