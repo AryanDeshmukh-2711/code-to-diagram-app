@@ -33,7 +33,7 @@ import time
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 
 from fastapi import Header, HTTPException, status
-from store.models import ExtractionRow, GenerationRunRow, ProjectRow
+from store.models import ChatEditRow, ExtractionRow, GenerationRunRow, ProjectRow
 
 SECRET = os.getenv("ASA_SIGNING_SECRET", "").encode() or None
 DEFAULT_TTL_SECONDS = 900
@@ -189,4 +189,11 @@ async def owned_extraction(session, extraction_id: str, account_id: str) -> Extr
     row = await session.get(ExtractionRow, extraction_id)
     if row is None or row.account_id != account_id:
         raise _not_found("extraction", extraction_id)
+    return row
+
+
+async def owned_chat_edit(session, edit_id: str, account_id: str) -> ChatEditRow:
+    row = await session.get(ChatEditRow, edit_id)
+    if row is None or row.account_id != account_id:
+        raise _not_found("chat edit", edit_id)
     return row

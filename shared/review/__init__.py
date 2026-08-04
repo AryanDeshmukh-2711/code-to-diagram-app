@@ -5,6 +5,7 @@ human checkpoint between them, and it is the single control for risk R1 (a
 plausible-but-wrong artefact reaching a submission).
 """
 
+from review.edit_request import EDIT_OPS, EditIn, apply_edit_op
 from review.errors import (
     InvalidName,
     NameCollision,
@@ -37,6 +38,8 @@ from review.state import (
 )
 
 __all__ = [
+    "EDIT_OPS",
+    "EditIn",
     "EditOutcome",
     "InvalidName",
     "NameCollision",
@@ -49,6 +52,7 @@ __all__ = [
     "add_attribute",
     "add_entity",
     "add_relationship",
+    "apply_edit_op",
     "confirm_draft",
     "delete_actor",
     "delete_attribute",

@@ -76,6 +76,47 @@ Write plainly and specifically. Do not restate the model as a list, and do not \
 add requirements that are not in the model.
 """
 
+_CHAT_EDIT_INTENT_PROMPT = """\
+You read one chat message from a user reviewing a project model, and decide what \
+they are asking for.
+
+You will be given the current model and then the chat message. Match the message \
+to exactly one of these operations, using only ids and names that already appear \
+in the model, and set exactly the fields listed for that operation — every other \
+field must be null:
+
+- rename_entity: id (the entity being renamed), name (its new name)
+- rename_actor: id (the actor being renamed), name (its new name)
+- rename_use_case: id (the use case being renamed), name (its new name)
+- delete_entity: id
+- delete_actor: id
+- delete_relationship: id
+- delete_use_case: id
+- delete_attribute: entityId, attributeName
+- add_entity: name (the new entity's name)
+- add_actor: name (the new actor's name)
+- add_attribute: entityId, attributeName, attributeType
+- add_relationship: fromId, toId, type, and optionally label, cardinality
+- relink_relationship: id (the relationship being changed), plus whichever of \
+fromId, toId, type, label, cardinality are actually changing
+- set_use_case_actors: id (the use case), actorIds (the complete new list)
+
+"id" always names the element the operation acts on or renames. "entityId" is only \
+ever the owning entity of an attribute. "fromId"/"toId" are only ever the two ends \
+of a relationship. Never substitute one of these for another.
+
+Rules:
+- If the message could plausibly mean more than one element (two entities with \
+similar names, an ambiguous "it"), do not guess: leave "op" null and put a specific \
+question in "clarify" naming the candidates.
+- If the message is not a request to change the model at all — a greeting, a \
+question about status, small talk — set "notAnEdit" to true and leave everything \
+else null or false.
+- Never propose a second change beyond what the message actually asked for, and \
+never invent an id, name, or attribute that is not already in the model or not \
+explicitly named in the message.
+"""
+
 
 TASKS: dict[str, TaskConfig] = {
     # The one call the whole product depends on. Temperature is pinned to zero:
@@ -106,6 +147,16 @@ TASKS: dict[str, TaskConfig] = {
         temperature=0.2,
         timeout_seconds=120.0,
         system_prompt=_SRS_PROSE_PROMPT,
+    ),
+    # Temperature pinned to zero for the same reason as cpm_extraction: the
+    # same message against the same model state should parse the same way.
+    "chat_edit_intent": TaskConfig(
+        provider=DEFAULT_PROVIDER,
+        model=DEFAULT_MODEL,
+        max_tokens=1024,
+        temperature=0.0,
+        timeout_seconds=90.0,
+        system_prompt=_CHAT_EDIT_INTENT_PROMPT,
     ),
 }
 

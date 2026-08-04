@@ -150,6 +150,45 @@ class ExtractionRow(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class ChatEditRow(Base):
+    """One chat message asking for a model change (P-M6-2).
+
+    `status` is the job's own lifecycle. `outcome` is set only once succeeded,
+    and is one of "applied", "clarify", "not_edit", or "rejected" — every one
+    of those is the parser and the review path doing their job correctly, not
+    a failure. `status="failed"` is reserved for the model or gateway itself
+    not producing a usable answer, mirroring `ExtractionRow`'s two-axis shape.
+    """
+
+    __tablename__ = "chat_edits"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    account_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    outcome: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
+    applied_op: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    references_updated: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    clarify_question: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    """Why a parsed op was rejected or invalid — the same message a malformed
+    HTTP request to review/edit would have produced."""
+
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class EventRow(Base):
     """One thing that happened. Append-only (PRD section 9).
 

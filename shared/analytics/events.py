@@ -34,6 +34,10 @@ EXPORT_COMPLETED = "export_completed"
 DIAGRAM_OUTCOME = "diagram_outcome"
 REGENERATION_REQUESTED = "regeneration_requested"
 QUOTA_REFUSED = "quota_refused"
+CHAT_EDIT_APPLIED = "chat_edit_applied"
+"""P-M6-2. Recorded once per edit that actually reached the CPM, with the
+message that produced it in the payload — the trace from a chat message to
+the op it caused, without a second table just to hold that link."""
 
 FUNNEL = (SIGNUP, PROJECT_CREATED, CPM_CONFIRMED, RUN_STARTED, EXPORT_COMPLETED)
 """The five steps a drop-off is measured between. RUN_COMPLETED is deliberately

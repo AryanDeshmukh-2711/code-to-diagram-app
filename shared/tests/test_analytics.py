@@ -305,7 +305,7 @@ def test_every_run_and_project_route_proves_ownership() -> None:
 
     routers = Path(__file__).resolve().parents[2] / "api" / "app" / "routers"
     unguarded = []
-    for name in ("runs.py", "review.py", "exports.py", "extraction.py"):
+    for name in ("runs.py", "review.py", "exports.py", "extraction.py", "chat.py"):
         source = (routers / name).read_text(encoding="utf-8")
         tree = ast.parse(source)
         for node in ast.walk(tree):
@@ -331,6 +331,7 @@ def test_every_run_and_project_route_proves_ownership() -> None:
                     "owned_run",
                     "owned_project",
                     "owned_extraction",
+                    "owned_chat_edit",
                     "ensure_project",
                     "_load",
                     "check_new",

@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import get_settings
 from app.core.db import engine
 from app.core.redis import redis_client
-from app.routers import auth, exports, extraction, health, review, runs
+from app.routers import auth, chat, exports, extraction, health, review, runs
 
 
 @asynccontextmanager
@@ -40,6 +40,7 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)
     app.include_router(extraction.router)
     app.include_router(review.router)
+    app.include_router(chat.router)
     app.include_router(runs.router)
     app.include_router(exports.router)
     app.include_router(exports.artefact_router)
