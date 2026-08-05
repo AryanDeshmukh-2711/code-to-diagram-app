@@ -1,13 +1,21 @@
 """Cleaning up model output — by removing and merging only, never by adding.
 
-Three jobs, in order, because each depends on the last:
+Four jobs, in order, because each depends on the last:
 
 1. **Merge near-identical names.** Book / Books / book are one concept spelled
    three ways, and left alone they become three boxes on a class diagram.
-2. **Drop orphan references.** A relationship whose endpoint was never declared
+2. **Canonicalise interface names against their component.** `provides` and
+   `requires` are free-text `Name` fields, not id references, so the model is
+   free to spell a component's own name two ways across the components that
+   mention it ("Catalog Service" as its own name, "catalog-service" wherever
+   another component requires it). Same reference, different spelling — left
+   alone this is exactly the byte-for-byte mismatch FR-10 exists to catch, and
+   it would fail the whole run over a spelling difference rather than a real
+   inconsistency.
+3. **Drop orphan references.** A relationship whose endpoint was never declared
    gets dropped. Inventing the missing endpoint would be fabrication, which is
    exactly what must not happen here.
-3. **Order every unordered collection.** So two extractions of the same input
+4. **Order every unordered collection.** So two extractions of the same input
    diff cleanly instead of showing churn the model invented.
 
 The invariant that matters: **nothing here can add an element.** Every step
@@ -19,7 +27,7 @@ the floor would just be measuring its own output.
 import re
 from dataclasses import dataclass, field
 
-from cpm.schema import CPMCollections, Entity
+from cpm.schema import Component, CPMCollections, Entity
 
 # Words whose trailing "s" is part of the word, not a plural. Without these,
 # "status" stems to "statu" and "address" to "addres", and two unrelated
@@ -102,7 +110,7 @@ def normalise(raw: CPMCollections) -> NormalisationOutcome:
     relationships = _keep_valid_relationships(raw.relationships, entity_id_map, entity_ids, notes)
     use_cases = _keep_valid_use_cases(raw.use_cases, actor_id_map, actor_ids, notes)
     states = _keep_valid_states(raw.states, entity_id_map, entity_ids, notes)
-    components = list(raw.components)
+    components = _canonicalise_components(raw.components, notes)
     component_ids = {component.id for component in components}
     nodes = _keep_valid_nodes(raw.nodes, component_ids, notes)
     flows = _keep_valid_flows(
@@ -206,6 +214,43 @@ def _merge_actors(actors: list, notes: list[str]) -> tuple[list, dict[str, str]]
             )
 
     return merged, id_map
+
+
+def _canonicalise_components(components: list[Component], notes: list[str]) -> list[Component]:
+    """Rewrite each `provides`/`requires` entry to match a component's name,
+    when the two are the same reference spelled differently.
+
+    `canonical_name_key` is the same grouping key entity names merge on
+    above — it is what already knows "Catalog Service" and "catalog-service"
+    are one concept, so reusing it here needs no new matching logic. A name
+    that matches no component (a genuine interface, not a component
+    reference) is left as-is beyond the usual whitespace/case cleanup — only
+    an actual match gets rewritten, never invented.
+    """
+    canonical_by_key = {canonical_name_key(component.name): component.name for component in components}
+
+    def canonicalise(name: str) -> str:
+        return canonical_by_key.get(canonical_name_key(name), normalise_display_name(name))
+
+    updated = []
+    for component in components:
+        provides = [canonicalise(name) for name in component.provides]
+        requires = [canonicalise(name) for name in component.requires]
+        if provides != list(component.provides) or requires != list(component.requires):
+            notes.append(
+                f"Canonicalised interface names on component {component.id!r} to match "
+                "the component name they referred to."
+            )
+        updated.append(
+            component.model_copy(
+                update={
+                    "name": normalise_display_name(component.name),
+                    "provides": provides,
+                    "requires": requires,
+                }
+            )
+        )
+    return updated
 
 
 # -- dropping orphans ------------------------------------------------------

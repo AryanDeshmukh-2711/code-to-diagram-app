@@ -259,6 +259,14 @@ async def test_a_transition_to_an_unknown_state_is_dropped() -> None:
     assert {t.to for t in booked.transitions} == {"s-appt-completed"}
 
 
+async def test_a_slug_shaped_requires_entry_is_canonicalised_to_the_components_name() -> None:
+    result = await run("library_management")
+    assert isinstance(result, Extracted)
+
+    lending = next(c for c in result.cpm.components if c.id == "comp-lending")
+    assert lending.requires == ["Catalogue Service"]
+
+
 async def test_an_undeclared_deployed_component_is_dropped() -> None:
     result = await run("clinic_appointments")
     assert isinstance(result, Extracted)
