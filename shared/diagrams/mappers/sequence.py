@@ -19,7 +19,7 @@ order, so participants are declared in first-appearance order across the flows
 rather than sorted — a sequence diagram sorted alphabetically reads as a zigzag.
 """
 
-from cpm.schema import CPM
+from cpm.schema import CPM, Flow
 from diagrams.mapper import DiagramMapper, InsufficientModelData
 from diagrams.text import alias, quote
 from diagrams.types import Engine
@@ -34,10 +34,10 @@ _HEADER = [
 ]
 
 
-def _participant_order(cpm: CPM) -> list[str]:
+def _participant_order(flows: list[Flow]) -> list[str]:
     """Every participant, in the order a reader first meets it."""
     seen: list[str] = []
-    for flow in cpm.flows:
+    for flow in flows:
         for participant in flow.participants:
             if participant not in seen:
                 seen.append(participant)
@@ -45,7 +45,16 @@ def _participant_order(cpm: CPM) -> list[str]:
 
 
 def to_source(cpm: CPM) -> str:
-    if not cpm.flows:
+    # A flow that was named but never given a step is exactly as empty as no
+    # flow at all — extraction sometimes produces one as a placeholder for
+    # "something happens here" it could not fill in. Rendered as-is, it
+    # contributes no participant declarations and no messages, and PlantUML
+    # cannot recognise the result as a sequence diagram at all (it guesses
+    # "class" and then rejects the `==` dividers). Filtering it out here
+    # keeps the same FR-11 promise "nothing to draw" already gets: a skip,
+    # never a syntax error handed to the engine.
+    meaningful = [flow for flow in cpm.flows if flow.steps]
+    if not meaningful:
         raise InsufficientModelData(
             "No interaction flows were described, so there is no sequence to draw. "
             "Describe what happens step by step for a task — who does what, and "
@@ -57,7 +66,7 @@ def to_source(cpm: CPM) -> str:
 
     lines = list(_HEADER)
 
-    for participant in _participant_order(cpm):
+    for participant in _participant_order(meaningful):
         # Actors first: a shared id means the same word is both a person and a
         # record, and on a sequence diagram the person is what is meant.
         if participant in actors:
@@ -72,7 +81,7 @@ def to_source(cpm: CPM) -> str:
 
     lines.append("")
 
-    for flow in cpm.flows:
+    for flow in meaningful:
         lines.append(f"== {flow.name} ==")
         for step in sorted(flow.steps, key=lambda s: (s.order, s.from_, s.to)):
             lines.append(f"{alias(step.from_)} -> {alias(step.to)} : {step.message}")

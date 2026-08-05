@@ -31,11 +31,12 @@ import json
 import os
 import sys
 import time
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
+
+from report import GREY, RED, RESET, Report
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 DESCRIPTION = FIXTURES / "description.txt"
@@ -71,96 +72,6 @@ MIN_ENTITIES = 5
 MIN_RELATIONSHIPS = 4
 
 BASE = os.getenv("AT1_API", "http://localhost:8000")
-
-
-# ---------------------------------------------------------------------------
-# The report
-# ---------------------------------------------------------------------------
-
-GREEN, RED, GREY, BOLD, RESET = "\033[32m", "\033[31m", "\033[90m", "\033[1m", "\033[0m"
-if not sys.stdout.isatty() or os.getenv("NO_COLOR"):
-    GREEN = RED = GREY = BOLD = RESET = ""
-
-
-@dataclass
-class Check:
-    number: int
-    name: str
-    ok: bool
-    found: str
-    expected: str
-    remedy: str = ""
-
-    def render(self) -> str:
-        mark = f"{GREEN}PASS{RESET}" if self.ok else f"{RED}FAIL{RESET}"
-        lines = [f"  {mark}  {self.number:>2}. {self.name:<44} {self.found}"]
-        if not self.ok:
-            lines.append(f"           {GREY}expected{RESET} {self.expected}")
-            for line in self.remedy.splitlines():
-                if line.strip():
-                    lines.append(f"           {GREY}->{RESET} {line.strip()}")
-        return "\n".join(lines)
-
-
-@dataclass
-class Report:
-    checks: list[Check] = field(default_factory=list)
-    notes: list[str] = field(default_factory=list)
-    replayed: bool = False
-    seconds: float = 0.0
-
-    def add(
-        self, name: str, ok: bool, found: str, expected: str, remedy: str = ""
-    ) -> Check:
-        check = Check(len(self.checks) + 1, name, ok, found, expected, remedy)
-        self.checks.append(check)
-        return check
-
-    def blocked(self, name: str, reason: str, remedy: str = "") -> Check:
-        return self.add(name, False, "not reached", reason, remedy)
-
-    @property
-    def failures(self) -> list[Check]:
-        return [check for check in self.checks if not check.ok]
-
-    @property
-    def passed(self) -> bool:
-        return not self.failures and not self.replayed
-
-    def render(self) -> str:
-        width = 78
-        lines = [
-            "=" * width,
-            f"{BOLD}AT-1{RESET}  {PROJECT_NAME} — end-to-end acceptance (SRS 10.1)",
-            "=" * width,
-        ]
-        lines.extend(self.notes)
-        lines.append("")
-        lines.extend(check.render() for check in self.checks)
-        lines.append("-" * width)
-
-        passes = len(self.checks) - len(self.failures)
-        summary = f"{passes} passed, {len(self.failures)} failed"
-        budget = f"wall time {self.seconds:.1f}s of {BUDGET_SECONDS:.0f}s budget"
-        lines.append(f"{summary}  ·  {budget}")
-
-        if self.failures:
-            lines.append("")
-            lines.append(f"{RED}{BOLD}AT-1 FAILED{RESET}. Broken promises:")
-            for check in self.failures:
-                lines.append(f"  {check.number:>2}. {check.name} — {check.found}")
-        elif self.replayed:
-            lines.append("")
-            lines.append(
-                f"{RED}{BOLD}NOT A FULL AT-1 PASS{RESET}: every assertion holds, but the "
-                f"extraction step was replayed"
-            )
-            lines.append("  from a recording rather than performed by a model. Start a model")
-            lines.append("  server and re-run to claim AT-1.")
-        else:
-            lines.append("")
-            lines.append(f"{GREEN}{BOLD}AT-1 PASSED{RESET}. V1 works.")
-        return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -314,7 +225,12 @@ async def run_at1() -> Report:
     from store.models import GenerationArtefactRow
     from store.session import SessionFactory
 
-    report = Report()
+    report = Report(
+        label="AT-1",
+        subtitle=f"{PROJECT_NAME} — end-to-end acceptance (SRS 10.1)",
+        budget_seconds=BUDGET_SECONDS,
+        success_line="V1 works.",
+    )
     started = time.perf_counter()
 
     text = DESCRIPTION.read_text(encoding="utf-8")
