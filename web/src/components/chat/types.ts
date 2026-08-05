@@ -117,11 +117,15 @@ export type ExportReadyMessage = BaseMessage & {
 
 /** A 402. `refusal` is `billing/quota.py`'s own `QuotaRefusal` — no rule ID
  * attaches to this step, but see lib/quota.ts's docstring for the principle
- * that does. */
+ * that does. `cpmVersionId` is set only when the refusal came from starting a
+ * run — it is what lets a `diagram_format` refusal offer a one-click retry in
+ * the format the tier actually allows (`refusal.limit`), instead of leaving
+ * the user to guess a chat phrase that was never wired to anything. */
 export type QuotaRefusalMessage = BaseMessage & {
   role: "assistant";
   kind: "quota-refusal";
   refusal: QuotaRefusal;
+  cpmVersionId?: string;
 };
 
 /** A 401. Never text glued into a narration bubble — see

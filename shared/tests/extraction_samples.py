@@ -238,6 +238,10 @@ LIBRARY = Sample(
                 "name": "Lending Service",
                 "type": "service",
                 "provides": ["LendingAPI"],
+                # Slug-shaped, not the "Catalogue Service" spelling used on that
+                # component's own `name` — the extractor writes the same
+                # reference two ways, and normalise() is what makes them agree.
+                "requires": ["catalogue-service"],
             },
         ],
         "nodes": [

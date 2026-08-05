@@ -209,7 +209,12 @@ export function ChatSession({ projectId }: { projectId: string }) {
    * through the same "assistant said something went wrong" text every other
    * error uses is exactly the Watch For this step names: that shortcut is
    * what already reintroduced copy drift once. */
-  function reportApiError(narrationId: string | null, error: unknown, fallback: string) {
+  function reportApiError(
+    narrationId: string | null,
+    error: unknown,
+    fallback: string,
+    cpmVersionId?: string,
+  ) {
     const refusal = quotaRefusal(error);
     const expired = error instanceof ApiError && error.status === 401;
 
@@ -217,7 +222,14 @@ export function ChatSession({ projectId }: { projectId: string }) {
       if (narrationId) updateNarration(narrationId, "That didn't go through — see below.");
       append(
         refusal
-          ? { id: newId(), role: "assistant", kind: "quota-refusal", refusal, at: new Date().toISOString() }
+          ? {
+              id: newId(),
+              role: "assistant",
+              kind: "quota-refusal",
+              refusal,
+              cpmVersionId,
+              at: new Date().toISOString(),
+            }
           : {
               id: newId(),
               role: "assistant",
@@ -298,7 +310,7 @@ export function ChatSession({ projectId }: { projectId: string }) {
     try {
       run = await startRun(format ? { projectId, cpmVersionId, format } : { projectId, cpmVersionId });
     } catch (error) {
-      reportApiError(narrationId, error, "Something went wrong starting that.");
+      reportApiError(narrationId, error, "Something went wrong starting that.", cpmVersionId);
       setBusy(false);
       return;
     }
@@ -705,6 +717,25 @@ export function ChatSession({ projectId }: { projectId: string }) {
         return;
       }
 
+      if (snapshot.status === "failed") {
+        // A model/schema hiccup, not a content problem (that's the
+        // "insufficient" branch above) -- the gateway already gave it one
+        // corrective retry internally and stopped (llm/gateway.py's
+        // MAX_ATTEMPTS is deliberately fixed, not something to loop around
+        // here). The same conversational retry still applies: whatever was
+        // typed next is combined with the same source text and tried again
+        // as a fresh attempt, with its own fresh two internal tries, rather
+        // than this being a dead end.
+        setPendingExtractionRetry({ extractionId: snapshot.extractionId });
+        updateNarration(
+          narrationId,
+          `${extractionOutcomeNarration(snapshot)}\n\nThat was the model's own output, not ` +
+            `something wrong with what you gave it. Reply here with anything (even just ` +
+            `"try again") and I'll run it again with the same description.`,
+        );
+        return;
+      }
+
       updateNarration(narrationId, extractionOutcomeNarration(snapshot));
       if (snapshot.status === "succeeded" && snapshot.outcome === "extracted") {
         setPendingExtractionRetry(null);
@@ -801,6 +832,7 @@ export function ChatSession({ projectId }: { projectId: string }) {
           onExportSubmit={onExportSubmit}
           exportSubmittingId={exportSubmittingId}
           onRenderPng={(cpmVersionId) => void runDiagramGeneration(cpmVersionId, "png")}
+          onRetryFormat={(cpmVersionId, format) => void runDiagramGeneration(cpmVersionId, format)}
           busy={busy}
         />
       </div>
