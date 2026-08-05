@@ -77,30 +77,62 @@ async def start_extraction(
     text: str | None = Form(default=None),
     file: UploadFile | None = File(default=None),  # noqa: B008 -- FastAPI's DI marker, not a mutable default
     projectName: str = Form(default=""),
+    previousExtractionId: str | None = Form(default=None),
     account: str = Depends(require_account),
 ) -> ExtractionOut:
     """Queue an extraction from pasted text or an uploaded PDF. 202; nothing
-    is rendered or sent to a model here (C-4)."""
-    if bool(text and text.strip()) == bool(file is not None):
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            detail="send exactly one of: text, or a PDF file",
-        )
+    is rendered or sent to a model here (C-4).
 
-    pdf_bytes: bytes | None = None
-    if file is not None:
-        if file.content_type not in ("application/pdf", "application/x-pdf") and not (
-            file.filename or ""
-        ).lower().endswith(".pdf"):
+    `previousExtractionId` is how a chat reply to an FR-5 "insufficient
+    input" outcome keeps going: `text` becomes the detail the user just
+    added, combined here with whatever the earlier attempt already had —
+    a pasted description or a PDF's extracted text, either one sits in that
+    row's own `source_text` — rather than the user having to retype or
+    re-upload everything from scratch. Still exactly one model call per
+    attempt (C-1); a second attempt is a new attempt, not a second call
+    layered onto the first.
+    """
+    if previousExtractionId:
+        if not text or not text.strip():
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                detail=f"expected a PDF, got {file.content_type or 'an unknown file type'}",
+                detail="continuing an extraction needs the additional detail as text",
             )
-        pdf_bytes = await file.read()
-        try:
-            probe_pdf(pdf_bytes)
-        except PdfRejected as exc:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+        async with SessionFactory() as session:
+            previous = await owned_extraction(session, previousExtractionId, account)
+        if previous.project_id != project_id:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"extraction {previousExtractionId!r} does not belong to project {project_id!r}"
+                ),
+            )
+        combined_text = (
+            f"{previous.source_text}\n\n{text.strip()}" if previous.source_text else text.strip()
+        )
+        pdf_bytes = None
+    else:
+        if bool(text and text.strip()) == bool(file is not None):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail="send exactly one of: text, or a PDF file",
+            )
+
+        pdf_bytes = None
+        if file is not None:
+            if file.content_type not in ("application/pdf", "application/x-pdf") and not (
+                file.filename or ""
+            ).lower().endswith(".pdf"):
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    detail=f"expected a PDF, got {file.content_type or 'an unknown file type'}",
+                )
+            pdf_bytes = await file.read()
+            try:
+                probe_pdf(pdf_bytes)
+            except PdfRejected as exc:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+        combined_text = text
 
     async with SessionFactory() as session:
         # A project created by dropping a PDF counts against the free tier
@@ -113,7 +145,7 @@ async def start_extraction(
             account_id=account,
             input_kind="pdf" if pdf_bytes is not None else "text",
             project_name=projectName.strip() or None,
-            source_text=text,
+            source_text=combined_text,
             source_pdf=pdf_bytes,
             status="pending",
         )

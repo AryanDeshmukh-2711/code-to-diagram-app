@@ -18,7 +18,13 @@ import {
   type ExportResult,
   type TemplateSummary,
 } from "@/lib/exports";
-import { extractFromPdf, extractFromText, streamExtraction, type Extraction } from "@/lib/extraction";
+import {
+  continueExtraction,
+  extractFromPdf,
+  extractFromText,
+  streamExtraction,
+  type Extraction,
+} from "@/lib/extraction";
 import { looksLikeGenerateRequest } from "@/lib/generateIntent";
 import { historyNarration } from "@/lib/historyNarration";
 import { looksLikeHistoryRequest } from "@/lib/historyIntent";
@@ -113,6 +119,15 @@ type PendingClarification = {
  * offer to fix it are the backend's own guidance and this product's existing
  * generation path respectively — nothing here reimplements either.
  *
+ * An FR-5 "insufficient input" outcome does not end the conversation either:
+ * `pendingExtractionRetry` names the attempt that came up short, and the
+ * next chat message is read as the detail the user is adding rather than an
+ * edit request or a fresh attach — combined server-side with what that
+ * attempt already had (`POST .../extract`'s `previousExtractionId`) so nothing
+ * typed or uploaded earlier has to be repeated. Still one model call per
+ * attempt; a retry is a new attempt; nothing here re-runs extraction twice on
+ * the same text or invents entities the description does not support.
+ *
  * Quota, billing and auth messages (P-M6-11) are canonical API output, not
  * narration: `reportApiError` is the one place every catch block in this
  * component funnels through, and it never lets a 402 or a 401 reach the
@@ -147,6 +162,9 @@ export function ChatSession({ projectId }: { projectId: string }) {
   );
   const [latestRunId, setLatestRunId] = useState<string | null>(null);
   const [awaitingExportFormat, setAwaitingExportFormat] = useState(false);
+  const [pendingExtractionRetry, setPendingExtractionRetry] = useState<{
+    extractionId: string;
+  } | null>(null);
   const [exportSubmittingId, setExportSubmittingId] = useState<string | null>(null);
   const activeStream = useRef<(() => void) | null>(null);
 
@@ -548,6 +566,13 @@ export function ChatSession({ projectId }: { projectId: string }) {
     // parser is enriched with the pending question and its own context.
     append({ id: newId(), role: "user", kind: "text", text, at: new Date().toISOString() });
 
+    if (pendingExtractionRetry) {
+      const { extractionId } = pendingExtractionRetry;
+      setPendingExtractionRetry(null);
+      void onContinueExtraction(extractionId, text);
+      return;
+    }
+
     if (awaitingExportFormat) {
       const format = parseExportFormat(text);
       setAwaitingExportFormat(false);
@@ -650,8 +675,47 @@ export function ChatSession({ projectId }: { projectId: string }) {
     });
   }
 
+  /** Tracks an extraction (fresh attach, or a retry) over SSE (C-4) and
+   * decides what happens after it lands. On "extracted", the usual review
+   * card. On FR-5's "insufficient" outcome, the conversation stays open
+   * instead of dead-ending: `pendingExtractionRetry` names this attempt so
+   * `onSend` reads the next message as more detail rather than an edit
+   * request, and the canonical reason/guidance (extractionOutcomeNarration —
+   * verbatim, see its own docstring) gets exactly one UI-owned sentence
+   * appended inviting that reply, never rewording the guidance itself. */
+  function trackExtraction(extraction: Extraction, narrationId: string) {
+    updateNarration(narrationId, extractionProgressNarration(extraction.status));
+
+    activeStream.current = streamExtraction(projectId, extraction.extractionId, (snapshot) => {
+      if (snapshot.status === "pending" || snapshot.status === "running") {
+        updateNarration(narrationId, extractionProgressNarration(snapshot.status));
+        return;
+      }
+
+      activeStream.current = null;
+      setBusy(false);
+
+      if (snapshot.status === "succeeded" && snapshot.outcome === "insufficient") {
+        setPendingExtractionRetry({ extractionId: snapshot.extractionId });
+        updateNarration(
+          narrationId,
+          `${extractionOutcomeNarration(snapshot)}\n\nReply here with that detail and I'll try ` +
+            `again with what you already gave me.`,
+        );
+        return;
+      }
+
+      updateNarration(narrationId, extractionOutcomeNarration(snapshot));
+      if (snapshot.status === "succeeded" && snapshot.outcome === "extracted") {
+        setPendingExtractionRetry(null);
+        void postReviewCard();
+      }
+    });
+  }
+
   async function onAttach(attachment: Attachment) {
     setPendingClarification(null); // starting a new project supersedes any open question
+    setPendingExtractionRetry(null); // ...and any open request for more detail on a stale attempt
 
     const label =
       attachment.kind === "pdf" ? `Attached ${attachment.file.name}` : "Attached a pasted description";
@@ -679,7 +743,11 @@ export function ChatSession({ projectId }: { projectId: string }) {
     try {
       extraction =
         attachment.kind === "pdf"
-          ? await extractFromPdf(projectId, attachment.file, pdfProjectName(attachment.file))
+          ? await extractFromPdf(
+              projectId,
+              attachment.file,
+              attachment.projectName || pdfProjectName(attachment.file),
+            )
           : await extractFromText(projectId, attachment.text, "New project");
     } catch (error) {
       reportApiError(narrationId, error, "Something went wrong sending that.");
@@ -687,32 +755,45 @@ export function ChatSession({ projectId }: { projectId: string }) {
       return;
     }
 
-    updateNarration(narrationId, extractionProgressNarration(extraction.status));
+    trackExtraction(extraction, narrationId);
+  }
 
-    activeStream.current = streamExtraction(projectId, extraction.extractionId, (snapshot) => {
-      if (snapshot.status === "pending" || snapshot.status === "running") {
-        updateNarration(narrationId, extractionProgressNarration(snapshot.status));
-        return;
-      }
-
-      updateNarration(narrationId, extractionOutcomeNarration(snapshot));
-      activeStream.current = null;
-      setBusy(false);
-
-      if (snapshot.status === "succeeded" && snapshot.outcome === "extracted") {
-        void postReviewCard();
-      }
+  /** A reply to an FR-5 "insufficient input" outcome. `POST .../extract`'s
+   * `previousExtractionId` combines this text with whatever that attempt
+   * already had server-side (see lib/extraction.ts's continueExtraction) —
+   * still one model call, just fed a fuller description than before. */
+  async function onContinueExtraction(previousExtractionId: string, text: string) {
+    const narrationId = newId();
+    append({
+      id: narrationId,
+      role: "assistant",
+      kind: "narration",
+      source: extractionProgressNarration("pending"),
+      at: new Date().toISOString(),
     });
+
+    setBusy(true);
+
+    let extraction: Extraction;
+    try {
+      extraction = await continueExtraction(projectId, previousExtractionId, text);
+    } catch (error) {
+      reportApiError(narrationId, error, "Something went wrong sending that.");
+      setBusy(false);
+      return;
+    }
+
+    trackExtraction(extraction, narrationId);
   }
 
   return (
-    <main className="mx-auto flex h-screen max-w-2xl flex-col">
+    <main className="mx-auto flex h-full max-w-2xl flex-col">
       {latestConfirmedVersion ? (
         <div className="border-b border-border bg-muted/40 px-4 py-1.5 text-center text-xs text-muted-foreground">
           Latest confirmed version: v{latestConfirmedVersion.version} ({latestConfirmedVersion.versionId})
         </div>
       ) : null}
-      <div className="flex-1 overflow-hidden">
+      <div className="min-h-0 flex-1 overflow-hidden">
         <MessageList
           messages={messages}
           onConfirm={onConfirmProject}

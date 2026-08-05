@@ -156,6 +156,13 @@ async def run_extraction(
         row.completed_at = completed
         # The raw PDF has done its job; there is no reason to keep an
         # uploaded document around once its text has been pulled out of it.
+        # The plain text it contained is a different matter -- a pasted
+        # description already sits in this same column for as long as the
+        # row exists, and a PDF-derived extraction that hit the FR-5 floor
+        # needs the same thing a pasted one does: something to combine with
+        # whatever detail the user adds next (see POST .../extract's
+        # previousExtractionId).
+        row.source_text = text
         row.source_pdf = None
         await session.commit()
 
