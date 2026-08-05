@@ -14,8 +14,6 @@ from typing import Any
 from analytics import events
 from arq import create_pool
 from arq.connections import RedisSettings
-from billing.quota import QuotaExceeded, check_new_run, check_template
-from billing.tiers import get_tier
 from diagrams.registry import registered_types
 from diagrams.types import RenderFormat
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -39,9 +37,9 @@ from store.session import SessionFactory
 
 from app.core.config import get_settings
 from app.core.identity import owned_project, owned_run, require_account
-from app.core.quota import as_http
 
 router = APIRouter(prefix="/runs", tags=["generation"])
+DEFAULT_QUEUE = "arq:default"
 
 POLL_SECONDS = 0.4
 """How often the progress stream re-reads run state. Renders take well under a
@@ -77,7 +75,6 @@ class RunOut(BaseModel):
     projectId: str
     cpmVersionId: str
     status: str
-    tier: str | None = None
     kind: str = "full"
     parentRunId: str | None = None
     requestedTypes: list[str]
@@ -127,7 +124,6 @@ async def _snapshot(session, run: GenerationRunRow) -> RunOut:
         projectId=run.project_id,
         cpmVersionId=run.cpm_version_id,
         status=run.status,
-        tier=run.tier,
         kind=run.kind,
         parentRunId=run.parent_run_id,
         requestedTypes=list(run.requested_types),
@@ -176,16 +172,6 @@ async def start_run(body: StartRunIn, account: str = Depends(require_account)) -
         if project is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"no project {body.projectId!r}")
 
-        # Entitlements first, before a job is queued or a row is written. A
-        # tier that cannot render SVG must be refused here rather than have the
-        # worker produce artefacts nobody is allowed to download.
-        try:
-            tier = await check_new_run(session, account, fmt.value)
-            if body.templateId:
-                await check_template(session, account, body.templateId)
-        except QuotaExceeded as exc:
-            raise as_http(exc) from None
-
         version = await session.get(CPMVersionRow, body.cpmVersionId)
         if version is None:
             # FR-6: generation runs from a confirmed version, and there is no
@@ -201,7 +187,6 @@ async def start_run(body: StartRunIn, account: str = Depends(require_account)) -
             cpm_version_id=body.cpmVersionId,
             template_id=body.templateId,
             account_id=account,
-            tier=tier.id,
             requested_types=sorted(wanted),
             fmt=fmt.value,
             status=RunStatus.PENDING,
@@ -214,7 +199,6 @@ async def start_run(body: StartRunIn, account: str = Depends(require_account)) -
             account_id=account,
             project_id=body.projectId,
             run_id=run.id,
-            tier=tier.id,
             payload={
                 "diagramTypes": sorted(wanted),
                 "format": fmt.value,
@@ -227,13 +211,11 @@ async def start_run(body: StartRunIn, account: str = Depends(require_account)) -
 
     pool = await create_pool(RedisSettings.from_dsn(get_settings().redis_url))
     try:
-        # Priority tiers land on their own queue, which a second worker pool
-        # consumes. One queue with a "priority" flag would still be FIFO.
         await pool.enqueue_job(
             "render_run",
             run.id,
             _job_id=f"render:{run.id}",
-            _queue_name=f"arq:{tier.queue}",
+            _queue_name=DEFAULT_QUEUE,
         )
     finally:
         await pool.aclose()
@@ -293,19 +275,13 @@ async def regenerate(
 
     child_id = await create_regeneration_run(plan, template_id=None)
 
-    async with SessionFactory() as session:
-        parent = await session.get(GenerationRunRow, run_id)
-    # Same queue the parent run itself used: a regeneration is not a fresh
-    # entitlement decision, it inherits the run it is redrawing from.
-    tier = get_tier(parent.tier if parent and parent.tier else "free")
-
     pool = await create_pool(RedisSettings.from_dsn(get_settings().redis_url))
     try:
         await pool.enqueue_job(
             "regenerate_diagram",
             child_id,
             _job_id=f"regen:{child_id}",
-            _queue_name=f"arq:{tier.queue}",
+            _queue_name=DEFAULT_QUEUE,
         )
     finally:
         await pool.aclose()
@@ -318,7 +294,6 @@ async def regenerate(
             account_id=parent.account_id if parent else None,
             project_id=plan.project_id,
             run_id=child_id,
-            tier=parent.tier if parent else None,
             payload={
                 "parentRunId": run_id,
                 "diagramType": plan.diagram_type,

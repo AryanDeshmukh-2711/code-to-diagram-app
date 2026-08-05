@@ -321,6 +321,9 @@ def test_every_run_and_project_route_proves_ownership() -> None:
                 "download_export",
                 "dashboard",
                 "metrics_json",
+                # Lists every template unconditionally — nothing here is
+                # scoped to a project, run or any other owned resource.
+                "list_templates",
             }:
                 continue
             body = ast.unparse(node)

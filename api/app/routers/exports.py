@@ -1,10 +1,9 @@
 """Requesting a document, collecting it, and the last step of the funnel.
 
-Three things converge here. It is where the tier's export entitlement is
-enforced (FR-22). It is where the funnel closes: a run that was generated and
-never exported is a drop-off, and until something recorded the export there was
-no way to see that drop. And, since the pre-launch review, it is the last
-generation path that stopped running inside an HTTP request.
+Two things converge here. It is where the funnel closes: a run that was
+generated and never exported is a drop-off, and until something recorded the
+export there was no way to see that drop. And, since the pre-launch review,
+it is the last generation path that stopped running inside an HTTP request.
 
 C-4 now holds everywhere. This endpoint checks, writes a row and enqueues; the
 worker assembles and renders; the finished file is collected through a signed,
@@ -18,7 +17,6 @@ from typing import Any
 from analytics import events
 from arq import create_pool
 from arq.connections import RedisSettings
-from billing.quota import QuotaExceeded, account_tier, check_export
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
 from generation.export import gather_figures
@@ -35,9 +33,9 @@ from store.session import SessionFactory
 
 from app.core.config import get_settings
 from app.core.identity import owned_run, require_account, sign, verify
-from app.core.quota import as_http
 
 router = APIRouter(prefix="/runs", tags=["exports"])
+DEFAULT_QUEUE = "arq:default"
 
 MEDIA = {
     "pdf": "application/pdf",
@@ -58,8 +56,6 @@ class ExportOut(BaseModel):
     url: str | None = None
     bytes: int | None = None
     error: str | None = None
-    watermarked: bool = False
-    tier: str | None = None
 
 
 @router.post("/{run_id}/export", status_code=status.HTTP_202_ACCEPTED)
@@ -74,11 +70,6 @@ async def export_run(
         )
 
     async with SessionFactory() as session:
-        try:
-            tier = await check_export(session, account, body.format)
-        except QuotaExceeded as exc:
-            raise as_http(exc) from None
-
         run = await owned_run(session, run_id, account)
         if run.status != "succeeded":
             raise HTTPException(
@@ -133,11 +124,9 @@ async def export_run(
             id=f"exp_{uuid.uuid4().hex[:16]}",
             run_id=run_id,
             account_id=account,
-            tier=tier.id,
             format=body.format,
             template_id=body.templateId,
             fields=dict(body.fields),
-            watermarked=bool(tier.watermark and body.format == "pdf"),
             status="pending",
         )
         session.add(request)
@@ -150,7 +139,7 @@ async def export_run(
             "export_document",
             export_id,
             _job_id=f"export:{export_id}",
-            _queue_name=f"arq:{tier.queue}",
+            _queue_name=DEFAULT_QUEUE,
         )
     finally:
         await pool.aclose()
@@ -159,8 +148,6 @@ async def export_run(
         exportId=export_id,
         status="pending",
         format=body.format,
-        watermarked=bool(tier.watermark and body.format == "pdf"),
-        tier=tier.id,
     )
 
 
@@ -210,13 +197,9 @@ templates_router = APIRouter(tags=["exports"])
 
 @templates_router.get("/templates", response_model=list[TemplateOut])
 async def list_templates(account: str = Depends(require_account)) -> list[TemplateOut]:
-    """Every template this account's tier may export with, fields and all
-    (FR-15). The chat surface reads labels, placeholders and required-ness
-    from here — it is not allowed to know what a template needs any other
-    way."""
-    async with SessionFactory() as session:
-        tier = await account_tier(session, account)
-
+    """Every template available, fields and all (FR-15). The chat surface
+    reads labels, placeholders and required-ness from here — it is not
+    allowed to know what a template needs any other way."""
     return [
         TemplateOut(
             id=template.id,
@@ -235,7 +218,6 @@ async def list_templates(account: str = Depends(require_account)) -> list[Templa
             ],
         )
         for template in sorted(available_templates().values(), key=lambda t: t.id)
-        if tier.allows_template(template.id)
     ]
 
 
@@ -263,8 +245,6 @@ async def export_status(export_id: str, account: str = Depends(require_account))
             bytes=len(request.content or b"") or None,
             error=request.error,
             url=(f"/exports/{export_id}/download?token={sign(export_id)}" if finished else None),
-            watermarked=request.watermarked,
-            tier=request.tier,
         )
 
         if finished:
@@ -273,14 +253,12 @@ async def export_status(export_id: str, account: str = Depends(require_account))
                 events.EXPORT_COMPLETED,
                 account_id=account,
                 run_id=request.run_id,
-                tier=request.tier,
                 payload={
                     "format": request.format,
                     "templateId": request.template_id,
                     "bytes": len(request.content or b""),
                     "figures": request.figures,
                     "tables": request.tables,
-                    "watermarked": request.watermarked,
                 },
             )
             await session.commit()

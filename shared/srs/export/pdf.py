@@ -1,15 +1,10 @@
 """PDF export — the same document, laid out on pages.
 
-Built on ReportLab rather than an HTML engine, for three reasons that matter
-here. It is pure Python, so the worker image needs no system libraries. It
+Built on ReportLab rather than an HTML engine, for two reasons that matter
+here. It is pure Python, so the worker image needs no system libraries. And it
 draws SVG as real vector through svglib, so a diagram stays sharp at any zoom
 and its text stays selectable and searchable — which for a marker skimming an
-appendix is the difference between a figure and a picture of a figure. And it
-gives access to the page canvas, which is what makes the free-tier watermark
-(FR-20) a *render-time* mark: the watermark is drawn into each page's own
-content stream as that page is produced. There is no second pass that reopens
-a finished PDF and stamps something on top — no PDF is ever read back by this
-module, which is asserted rather than promised.
+appendix is the difference between a figure and a picture of a figure.
 
 AT-1 — identical content in both formats — is a property of the design, not a
 diffing exercise. Both exporters are pure functions of the same `Document`,
@@ -22,7 +17,7 @@ import io
 import logging
 from dataclasses import dataclass
 
-from reportlab.lib.colors import Color, HexColor
+from reportlab.lib.colors import HexColor
 from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
@@ -69,7 +64,7 @@ from srs.ast import (
 from srs.ast import (
     Spacer as AstSpacer,
 )
-from srs.export.template import A4, DocumentTemplate, Watermark
+from srs.export.template import A4, DocumentTemplate
 from srs.numbering import render_runs
 
 logger = logging.getLogger(__name__)
@@ -109,21 +104,19 @@ class PdfResult:
 
 
 class _Painter:
-    """Draws everything that is not flowing content: the running head, the
-    rule under it, and the watermark. Called by ReportLab once per page, while
-    that page is being written."""
+    """Draws everything that is not flowing content: the running head and the
+    rule under it. Called by ReportLab once per page, while that page is
+    being written."""
 
-    def __init__(self, template: DocumentTemplate, project: str, watermark: Watermark | None):
+    def __init__(self, template: DocumentTemplate, project: str):
         self.template = template
         self.project = project
-        self.watermark = watermark
 
     def title_page(self, canvas, doc) -> None:
-        # No running head on a title page; the watermark still applies.
-        self._draw_watermark(canvas, doc)
+        # No running head on a title page.
+        pass
 
     def body_page(self, canvas, doc) -> None:
-        self._draw_watermark(canvas, doc)
         self._draw_header(canvas, doc)
 
     def _draw_header(self, canvas, doc) -> None:
@@ -145,49 +138,6 @@ class _Painter:
                 y - 3,
             )
         canvas.restoreState()
-
-    def _draw_watermark(self, canvas, doc) -> None:
-        """FR-20, drawn into this page's content stream as the page is made.
-
-        Not an overlay merged into a finished document: by the time this
-        function has run, the mark is part of the page, and there is no
-        intermediate PDF anywhere that lacks it.
-        """
-        mark = self.watermark
-        if mark is None:
-            return
-
-        template = self.template
-        size = _watermark_size(mark, template)
-
-        canvas.saveState()
-        canvas.translate(
-            template.page_width_mm * mm / 2,
-            template.page_height_mm * mm / 2,
-        )
-        canvas.rotate(mark.angle)
-        canvas.setFont(_font(mark.font), size)
-        red, green, blue = mark.rgb
-        canvas.setFillColor(Color(red, green, blue, alpha=mark.opacity))
-        canvas.drawCentredString(0, 0, mark.text)
-        if mark.subtext:
-            canvas.setFont(_font(mark.font), size / 2.5)
-            canvas.drawCentredString(0, -size, mark.subtext)
-        canvas.restoreState()
-
-
-def _watermark_size(mark: Watermark, template: DocumentTemplate) -> float:
-    """Shrink the mark until it fits the page, never past it.
-
-    A watermark clipped at both edges reads as a rendering bug rather than as a
-    plan notice, and the text is not ours to shorten — it comes from the tier.
-    """
-    diagonal = ((template.page_width_mm * mm) ** 2 + (template.page_height_mm * mm) ** 2) ** 0.5
-    usable = diagonal * 0.82
-    width = pdfmetrics.stringWidth(mark.text, _font(mark.font), mark.size_pt)
-    if width <= usable:
-        return mark.size_pt
-    return mark.size_pt * usable / width
 
 
 def _footer_text(template: DocumentTemplate, page: int, total: int) -> str:
@@ -745,13 +695,12 @@ def _index_flowable(kind: str, template: DocumentTemplate, block=None, cell_styl
 def export_pdf(
     source: Document,
     template: DocumentTemplate = A4,
-    watermark: Watermark | None = None,
 ) -> PdfResult:
     """Render the document AST as a PDF.
 
-    A pure function of the AST, the template and the watermark. It reads no
-    database, calls no model, produces no intermediate DOCX, and never reopens
-    the bytes it has written.
+    A pure function of the AST and the template. It reads no database, calls
+    no model, produces no intermediate DOCX, and never reopens the bytes it
+    has written.
     """
     if not source.numbered:
         raise ValueError(
@@ -781,7 +730,7 @@ def export_pdf(
     frame = Frame(
         doc.leftMargin, doc.bottomMargin, doc.width, doc.height, id="body", showBoundary=0
     )
-    painter = _Painter(template, source.meta.project_name, watermark)
+    painter = _Painter(template, source.meta.project_name)
     doc.addPageTemplates(
         [
             PageTemplate(id="title", frames=[frame], onPage=painter.title_page),

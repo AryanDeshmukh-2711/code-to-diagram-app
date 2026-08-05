@@ -21,7 +21,6 @@ from cpm.schema import CPM
 from srs.assemble import assemble_srs
 from srs.export.docx import export_docx
 from srs.export.pdf import export_pdf
-from srs.export.template import FREE_TIER
 from srs.ieee830 import CAPTIONS, FigureInput
 from srs.template.apply import (
     MissingTemplateFields,
@@ -136,7 +135,7 @@ async def run_export(export_id: str, session_factory=SessionFactory) -> ExportOu
         resolved = to_document_template(template, inputs)
 
         if request.format == "pdf":
-            result = export_pdf(document, resolved, FREE_TIER if request.watermarked else None)
+            result = export_pdf(document, resolved)
         else:
             result = export_docx(document, resolved)
         content = result.content

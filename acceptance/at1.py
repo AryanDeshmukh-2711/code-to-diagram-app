@@ -45,13 +45,6 @@ RECORDING = FIXTURES / "recorded_model_output.json"
 PROJECT_NAME = "Library Management System"
 AUTHOR = "A. V. Deshmukh"
 
-ACCOUNT_TIER = "pro"
-"""AT-1 exercises the whole product, so it runs on a plan entitled to all of
-it. On the free tier the SVG run is refused with a 402 — correctly, and that
-refusal is covered by the quota tests rather than here. An acceptance test that
-quietly ran on whatever plan happened to be the default would start failing for
-billing reasons and read as a rendering bug."""
-
 V1_DIAGRAMS = (
     "class",
     "use_case",
@@ -147,7 +140,7 @@ async def _entitled_session(client: httpx.AsyncClient) -> tuple[str, dict[str, s
     and an account inserted straight into the database would skip the one thing
     standing between a stranger and somebody's coursework.
     """
-    registered = await client.post(f"{BASE}/auth/register", json={"tier": ACCOUNT_TIER})
+    registered = await client.post(f"{BASE}/auth/register", json={})
     registered.raise_for_status()
     account = registered.json()
 
@@ -278,9 +271,7 @@ async def run_at1() -> Report:
     project_id = f"at1_{int(time.time())}"
     async with httpx.AsyncClient(timeout=BUDGET_SECONDS) as client:
         account, auth = await _entitled_session(client)
-        report.notes.append(
-            f"account     {account} on the {ACCOUNT_TIER} plan, signed in (FR-22)"
-        )
+        report.notes.append(f"account     {account}, signed in")
         version_id = await _confirm_over_http(client, project_id, cpm, auth)
         svg_run = await _run(client, project_id, version_id, available, "svg", auth)
         png_run = await _run(client, project_id, version_id, available, "png", auth)

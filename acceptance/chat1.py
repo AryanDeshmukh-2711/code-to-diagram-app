@@ -43,11 +43,6 @@ from report import Report
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 DESCRIPTION = FIXTURES / "chat1_description.txt"
 
-ACCOUNT_TIER = "pro"
-"""Same reasoning as AT-1's own choice: a plan entitled to everything this
-test exercises, so a failure reads as a pipeline bug, not a billing one —
-quota refusals are P-M6-11's own acceptance surface, not this one's."""
-
 BUDGET_SECONDS = 120.0
 BASE = os.getenv("CHAT1_API", os.getenv("AT1_API", "http://localhost:8000"))
 POLL_INTERVAL = 0.3
@@ -78,7 +73,7 @@ async def _model_reachable() -> bool:
 async def _entitled_session(client: httpx.AsyncClient) -> tuple[str, dict[str, str]]:
     """Register, sign in, and return the account id with its auth header —
     through the real endpoints, exactly as a new user reaches them."""
-    registered = await client.post(f"{BASE}/auth/register", json={"tier": ACCOUNT_TIER})
+    registered = await client.post(f"{BASE}/auth/register", json={})
     registered.raise_for_status()
     account = registered.json()
 
@@ -216,9 +211,7 @@ async def run_chat1() -> Report:
     async with httpx.AsyncClient(timeout=BUDGET_SECONDS) as client:
         # -- register + sign in ----------------------------------------------
         account, auth = await _entitled_session(client)
-        report.notes.append(
-            f"account     {account} on the {ACCOUNT_TIER} plan, signed in"
-        )
+        report.notes.append(f"account     {account}, signed in")
 
         # -- extraction, narrated ---------------------------------------------
         extraction = await _extract(client, project_id, text, auth, deadline)
