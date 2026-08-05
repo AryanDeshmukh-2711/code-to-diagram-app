@@ -14,9 +14,11 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body className="min-h-screen antialiased">
-        <AppHeader />
-        {children}
+      <body className="antialiased">
+        <div className="flex h-screen flex-col">
+          <AppHeader />
+          <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+        </div>
       </body>
     </html>
   );

@@ -159,6 +159,49 @@ async def test_insufficient_input_writes_no_draft(session_factory) -> None:
     assert draft is None
 
 
+async def test_a_pdf_sourced_extraction_persists_its_extracted_text(session_factory) -> None:
+    # The raw PDF bytes are cleared once used, but the plain text pulled out
+    # of them now survives on the row the same way a pasted description's
+    # always has -- what POST .../extract's previousExtractionId combines
+    # with a follow-up reply needs this regardless of which way the model
+    # first arrived.
+    from io import BytesIO
+
+    from reportlab.pdfgen import canvas
+
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer)
+    pdf.drawString(72, 720, "A tiny PDF used only to prove its text survives extraction.")
+    pdf.save()
+
+    sample = BY_KEY["parking_lot"]
+    async with session_factory() as session:
+        session.add(
+            ExtractionRow(
+                id="ext_pdf_source",
+                project_id=PROJECT_ID,
+                account_id="acct_test",
+                input_kind="pdf",
+                project_name="From a PDF",
+                source_pdf=buffer.getvalue(),
+                status="pending",
+            )
+        )
+        await session.commit()
+
+    await run_extraction(
+        "ext_pdf_source",
+        session_factory=session_factory,
+        service=service_returning(sample.llm_output),
+    )
+
+    async with session_factory() as session:
+        row = await session.get(ExtractionRow, "ext_pdf_source")
+    assert row.source_pdf is None
+    assert row.source_text is not None
+    assert "tiny PDF" in row.source_text
+
+
 async def test_an_unknown_extraction_id_raises(session_factory) -> None:
     with pytest.raises(ExtractionNotFound):
         await run_extraction("ext_does_not_exist", session_factory=session_factory)

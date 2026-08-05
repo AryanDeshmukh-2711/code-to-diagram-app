@@ -221,6 +221,50 @@ def test_sequence_skips_rather_than_inventing_when_there_are_no_flows(cpm) -> No
     assert "step by step" in excinfo.value.reason, "the message must tell the user what to add"
 
 
+def test_sequence_skips_rather_than_producing_an_empty_diagram_body(cpm) -> None:
+    # A flow that was named but never given a step is exactly as empty as no
+    # flow at all (P-M6-12/CHAT-1 caught extraction doing this): rendered
+    # as-is it has no participant declarations and no messages, and PlantUML
+    # cannot recognise the result as a sequence diagram — it guesses "class"
+    # and rejects the `==` dividers as a syntax error. That must be a skip,
+    # the same honest "nothing to draw" every other empty case already is,
+    # never a source handed to the engine that the engine then rejects.
+    from cpm.schema import CPM
+    from diagrams.mapper import InsufficientModelData
+
+    empty_flow = {
+        "id": "placeholder-flow",
+        "name": "Placeholder Flow",
+        "participants": [],
+        "steps": [],
+    }
+    only_empty = CPM.model_validate(
+        {**cpm.model_dump(by_alias=True, mode="json"), "flows": [empty_flow]}
+    )
+    with pytest.raises(InsufficientModelData) as excinfo:
+        get_mapper("sequence").to_source(only_empty)
+    assert "step by step" in excinfo.value.reason
+
+
+def test_sequence_drops_an_empty_flow_but_keeps_a_populated_one(cpm) -> None:
+    # A mix should not lose the real flow's divider, and must not print the
+    # empty one's either — the empty flow contributes nothing to see.
+    from cpm.schema import CPM
+
+    empty_flow = {
+        "id": "placeholder-flow",
+        "name": "Placeholder Flow",
+        "participants": [],
+        "steps": [],
+    }
+    payload = cpm.model_dump(by_alias=True, mode="json")
+    mixed = CPM.model_validate({**payload, "flows": [*payload["flows"], empty_flow]})
+    source = get_mapper("sequence").to_source(mixed)
+    assert "Placeholder Flow" not in source
+    for flow in cpm.flows:
+        assert f"== {flow.name} ==" in source
+
+
 # --------------------------------------------------------------------------
 # Shape
 # --------------------------------------------------------------------------

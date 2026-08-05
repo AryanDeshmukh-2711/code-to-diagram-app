@@ -1,0 +1,1 @@
+A personal task tracker where a User creates Tasks. A Task has a title and a due date. A User can mark a Task as done.

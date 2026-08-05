@@ -47,6 +47,28 @@ export async function extractFromPdf(
   });
 }
 
+/** A reply to an FR-5 "insufficient input" outcome — `text` is the detail
+ * just typed, combined server-side with whatever the earlier attempt
+ * already had (a pasted description, or a PDF's extracted text) rather than
+ * starting over. Still one extraction, one model call; `previousExtractionId`
+ * only tells the server what to combine the new text with. */
+export async function continueExtraction(
+  projectId: string,
+  previousExtractionId: string,
+  text: string,
+  projectName?: string,
+): Promise<Extraction> {
+  const body = new FormData();
+  body.set("text", text);
+  body.set("previousExtractionId", previousExtractionId);
+  if (projectName) body.set("projectName", projectName);
+  return apiFetch<Extraction>(`/projects/${projectId}/extract`, {
+    method: "POST",
+    body,
+    isFormData: true,
+  });
+}
+
 export async function getExtraction(projectId: string, extractionId: string): Promise<Extraction> {
   return apiFetch<Extraction>(`/projects/${projectId}/extractions/${extractionId}`);
 }

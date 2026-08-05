@@ -9,7 +9,9 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 
-export type Attachment = { kind: "pdf"; file: File } | { kind: "text"; text: string };
+export type Attachment =
+  | { kind: "pdf"; file: File; projectName?: string }
+  | { kind: "text"; text: string };
 
 export type ComposerProps = {
   /** A plain chat message — a question, or an edit request. Never how a
@@ -27,6 +29,16 @@ export type ComposerProps = {
  * message dropped into the wrong pipeline because its text merely looked
  * like a project description is exactly the failure this split prevents —
  * the distinction is made here, once, by which control the user touched.
+ *
+ * A staged file is the one exception to "two separate sends": picking or
+ * dropping a file is already the explicit, unambiguous "this is my project"
+ * gesture (no text was read to guess it), so once a file is staged the
+ * single Send button — and Enter in the message box — attaches it, using
+ * whatever is typed there as an optional project name rather than requiring
+ * a second click on a second button. Pasting a description in as plain text
+ * still goes through its own explicit control below, because there nothing
+ * but the user's own marking distinguishes a project description from an
+ * ordinary chat message typed into the same shape of box.
  */
 export function Composer({ onSend, onAttach, busy = false }: ComposerProps) {
   const [text, setText] = useState("");
@@ -59,22 +71,29 @@ export function Composer({ onSend, onAttach, busy = false }: ComposerProps) {
     }
   }
 
-  function submitText() {
+  /** The message box's Send button and its Enter key both land here. A
+   * staged file takes priority — it is the thing waiting to be finished —
+   * and whatever is typed becomes its project name rather than a message
+   * sent alongside it and left to mean nothing. */
+  function submitMain() {
+    if (busy) return;
+    if (stagedFile) {
+      onAttach({ kind: "pdf", file: stagedFile, projectName: text.trim() || undefined });
+      setStagedFile(null);
+      setText("");
+      setAttachError(null);
+      setAttachOpen(false);
+      return;
+    }
     const trimmed = text.trim();
-    if (!trimmed || busy) return;
+    if (!trimmed) return;
     onSend(trimmed);
     setText("");
   }
 
-  function submitAttach() {
-    if (stagedFile) {
-      onAttach({ kind: "pdf", file: stagedFile });
-    } else if (attachText.trim()) {
-      onAttach({ kind: "text", text: attachText.trim() });
-    } else {
-      return;
-    }
-    setStagedFile(null);
+  function submitPastedText() {
+    if (busy || !attachText.trim()) return;
+    onAttach({ kind: "text", text: attachText.trim() });
     setAttachText("");
     setAttachError(null);
     setAttachOpen(false);
@@ -121,20 +140,25 @@ export function Composer({ onSend, onAttach, busy = false }: ComposerProps) {
           ) : null}
 
           {stagedFile ? (
-            <div className="flex items-center justify-between rounded-md bg-muted px-3 py-2 text-sm">
-              <span className="flex items-center gap-2">
-                <FileText className="size-4 shrink-0" />
-                {stagedFile.name}
-              </span>
-              <button
-                type="button"
-                aria-label="Remove attached file"
-                className="text-muted-foreground hover:text-foreground"
-                onClick={() => setStagedFile(null)}
-              >
-                <X className="size-4" />
-              </button>
-            </div>
+            <>
+              <div className="flex items-center justify-between rounded-md bg-muted px-3 py-2 text-sm">
+                <span className="flex items-center gap-2">
+                  <FileText className="size-4 shrink-0" />
+                  {stagedFile.name}
+                </span>
+                <button
+                  type="button"
+                  aria-label="Remove attached file"
+                  className="text-muted-foreground hover:text-foreground"
+                  onClick={() => setStagedFile(null)}
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Add a project name below if you want one, then press Enter or Send.
+              </p>
+            </>
           ) : (
             <Textarea
               value={attachText}
@@ -159,14 +183,16 @@ export function Composer({ onSend, onAttach, busy = false }: ComposerProps) {
               className="hidden"
               onChange={(event) => event.target.files && handleFiles(event.target.files)}
             />
-            <Button
-              type="button"
-              size="sm"
-              onClick={submitAttach}
-              disabled={busy || (!stagedFile && !attachText.trim())}
-            >
-              Attach project
-            </Button>
+            {stagedFile ? null : (
+              <Button
+                type="button"
+                size="sm"
+                onClick={submitPastedText}
+                disabled={busy || !attachText.trim()}
+              >
+                Attach project
+              </Button>
+            )}
           </div>
         </div>
       ) : null}
@@ -187,15 +213,19 @@ export function Composer({ onSend, onAttach, busy = false }: ComposerProps) {
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
-              submitText();
+              submitMain();
             }
           }}
-          placeholder="Ask a question, or tell it what to change…"
+          placeholder={
+            stagedFile
+              ? "Project name (optional)…"
+              : "Ask a question, or tell it what to change…"
+          }
           rows={1}
           disabled={busy}
           className="min-h-9 resize-none"
         />
-        <Button type="button" onClick={submitText} disabled={busy || !text.trim()}>
+        <Button type="button" onClick={submitMain} disabled={busy || (!stagedFile && !text.trim())}>
           Send
         </Button>
       </div>
