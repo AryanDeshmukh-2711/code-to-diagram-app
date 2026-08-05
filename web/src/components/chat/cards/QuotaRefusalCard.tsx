@@ -1,9 +1,18 @@
 import type { QuotaRefusal } from "@/lib/quota";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 
 export type QuotaRefusalCardProps = {
   refusal: QuotaRefusal;
+  /** Set only when this refusal came from starting a run — needed to retry. */
+  cpmVersionId?: string;
+  busy?: boolean;
+  /** Starts a fresh run against `cpmVersionId` in the format the tier
+   * actually allows (`refusal.limit`). Only ever offered for a
+   * `diagram_format` refusal — there is no equivalent one-click fix for
+   * project_limit, run_limit, export_format, or template_not_in_tier. */
+  onRetryFormat?: (cpmVersionId: string, format: string) => void;
 };
 
 /**
@@ -16,8 +25,13 @@ export type QuotaRefusalCardProps = {
  * pair, and the upgrade note are each read straight off `refusal`, not
  * recomputed from it.
  */
-export function QuotaRefusalCard({ refusal }: QuotaRefusalCardProps) {
+export function QuotaRefusalCard({ refusal, cpmVersionId, busy = false, onRetryFormat }: QuotaRefusalCardProps) {
   const hasUsage = refusal.limit !== null && refusal.used !== null;
+  const canRetryFormat =
+    refusal.code === "diagram_format" &&
+    cpmVersionId !== undefined &&
+    typeof refusal.limit === "string" &&
+    onRetryFormat !== undefined;
 
   return (
     <Card className="max-w-md border-destructive/40">
@@ -47,6 +61,17 @@ export function QuotaRefusalCard({ refusal }: QuotaRefusalCardProps) {
           <p className="text-xs text-muted-foreground">{refusal.upgradeGives}</p>
         ) : null}
       </CardContent>
+      {canRetryFormat ? (
+        <CardFooter>
+          <Button
+            size="sm"
+            disabled={busy}
+            onClick={() => onRetryFormat(cpmVersionId, refusal.limit as string)}
+          >
+            Generate as {(refusal.limit as string).toUpperCase()}
+          </Button>
+        </CardFooter>
+      ) : null}
     </Card>
   );
 }
