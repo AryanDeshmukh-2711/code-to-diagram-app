@@ -48,7 +48,7 @@ export function MessageList({
   }, [messages.length]);
 
   return (
-    <div className="flex flex-col gap-4 overflow-y-auto p-4" role="log" aria-live="polite">
+    <div className="flex h-full flex-col gap-4 overflow-y-auto p-4" role="log" aria-live="polite">
       {messages.map((message) => (
         <MessageRow
           key={message.id}
