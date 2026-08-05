@@ -305,14 +305,15 @@ def test_every_run_and_project_route_proves_ownership() -> None:
 
     routers = Path(__file__).resolve().parents[2] / "api" / "app" / "routers"
     unguarded = []
-    for name in ("runs.py", "review.py", "exports.py", "extraction.py", "chat.py"):
+    for name in ("runs.py", "review.py", "exports.py", "extraction.py", "chat.py", "projects.py"):
         source = (routers / name).read_text(encoding="utf-8")
         tree = ast.parse(source)
         for node in ast.walk(tree):
             if not isinstance(node, ast.AsyncFunctionDef):
                 continue
             decorated = any(
-                isinstance(d, ast.Call) and getattr(d.func, "attr", "") in {"get", "post"}
+                isinstance(d, ast.Call)
+                and getattr(d.func, "attr", "") in {"get", "post", "delete", "patch", "put"}
                 for d in node.decorator_list
             )
             if not decorated or node.name in {
