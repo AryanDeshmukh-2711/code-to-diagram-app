@@ -1,5 +1,7 @@
-import { CheckCircle2, CircleDashed, CircleSlash, Loader2, XCircle } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { CheckCircle2, CircleDashed, CircleSlash, Download, Loader2, XCircle } from "lucide-react";
 
+import { absoluteUrl, listArtefactLinks } from "@/lib/exports";
 import type { Artefact, Run } from "@/lib/runs";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,6 +10,32 @@ import { Progress } from "@/components/ui/progress";
 export type DiagramProgressCardProps = {
   run: Run;
 };
+
+/** A run stops changing once it is pending/running no longer — that is also
+ * the earliest point a signed link is guaranteed to exist for every
+ * succeeded artefact, so links are fetched once here rather than re-fetched
+ * on every SSE frame while diagrams are still being drawn. */
+function useArtefactLinks(run: Run): Record<string, string> {
+  const [links, setLinks] = useState<Record<string, string>>({});
+  const fetchedFor = useRef<string | null>(null);
+
+  useEffect(() => {
+    const terminal = run.status === "succeeded" || run.status === "failed";
+    if (!terminal || fetchedFor.current === run.runId) return;
+    fetchedFor.current = run.runId;
+
+    listArtefactLinks(run.runId)
+      .then(({ artefacts }) => {
+        setLinks(Object.fromEntries(artefacts.map((a) => [a.diagramType, absoluteUrl(a.url)])));
+      })
+      .catch(() => {
+        // No links this run — the download column just stays empty, same as
+        // any diagram that never rendered.
+      });
+  }, [run.runId, run.status]);
+
+  return links;
+}
 
 const STATUS_LABEL: Record<string, string> = {
   pending: "Queued",
@@ -27,6 +55,7 @@ export function DiagramProgressCard({ run }: DiagramProgressCardProps) {
   const total = run.artefacts.length || run.requestedTypes.length;
   const percent = total > 0 ? Math.round((finished / total) * 100) : 0;
   const anyFailed = run.artefacts.some((artefact) => artefact.status === "failed");
+  const links = useArtefactLinks(run);
 
   return (
     <Card className="max-w-md">
@@ -42,7 +71,11 @@ export function DiagramProgressCard({ run }: DiagramProgressCardProps) {
         ) : null}
         <ul className="space-y-1.5">
           {run.artefacts.map((artefact) => (
-            <ArtefactRow key={artefact.diagramType} artefact={artefact} />
+            <ArtefactRow
+              key={artefact.diagramType}
+              artefact={artefact}
+              downloadUrl={links[artefact.diagramType]}
+            />
           ))}
         </ul>
         {run.error ? <p className="text-xs text-destructive">{run.error}</p> : null}
@@ -59,7 +92,7 @@ export function DiagramProgressCard({ run }: DiagramProgressCardProps) {
  * slash, the same "absent, not broken" language a disabled control uses
  * elsewhere in this UI.
  */
-function ArtefactRow({ artefact }: { artefact: Artefact }) {
+function ArtefactRow({ artefact, downloadUrl }: { artefact: Artefact; downloadUrl?: string }) {
   return (
     <li className="flex items-center justify-between gap-2 text-sm">
       <span className="text-foreground">{artefact.title || artefact.diagramType}</span>
@@ -70,6 +103,16 @@ function ArtefactRow({ artefact }: { artefact: Artefact }) {
           </Badge>
         ) : null}
         <RowStatus status={artefact.status} />
+        {downloadUrl ? (
+          <a
+            href={downloadUrl}
+            download
+            aria-label={`Download ${artefact.title || artefact.diagramType}`}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <Download className="size-3.5" />
+          </a>
+        ) : null}
       </span>
     </li>
   );

@@ -47,17 +47,13 @@ export type Edit =
 export class ReviewRefused extends Error {}
 
 /** review.py's own refusals (404 no draft, 409 an edit that fails validation,
- * 422 not confirmable) are all messages meant for the user, not faults to log
- * and hide — so every ApiError from this module surfaces as one. A 401 is
- * not one of review.py's own refusals, though — it is the same auth
- * boundary every endpoint shares, and callers need it to still read as
- * `ApiError` with `status === 401` so a session-expired prompt can render
- * instead of a refusal about a review that never actually ran. */
+ * 422 not confirmable) are all messages meant for the user, not faults to
+ * log and hide — so every ApiError from this module surfaces as one. */
 async function asReview<T>(promise: Promise<T>): Promise<T> {
   try {
     return await promise;
   } catch (error) {
-    if (error instanceof ApiError && error.status !== 401) throw new ReviewRefused(error.message);
+    if (error instanceof ApiError) throw new ReviewRefused(error.message);
     throw error;
   }
 }
@@ -84,11 +80,8 @@ export async function applyEdit(projectId: string, edit: Edit): Promise<Review> 
 export async function confirmReview(
   projectId: string,
 ): Promise<{ versionId: string; version: number; confirmedAt: string }> {
-  // No body, matching the server's own distinction: a confirm sent with no
-  // review-signals payload is not attributed to an account in the funnel
-  // event (see review.py's confirm()) — a later prompt wires the signals
-  // this screen already tracks (lastEdit, referencesUpdated) into a real
-  // ConfirmIn body.
+  // No body yet — a later prompt wires the review-signals this screen
+  // already tracks (lastEdit, referencesUpdated) into a real ConfirmIn body.
   return asReview(apiFetch(`/projects/${projectId}/review/confirm`, { method: "POST" }));
 }
 

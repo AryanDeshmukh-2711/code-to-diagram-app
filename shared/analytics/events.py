@@ -33,7 +33,6 @@ EXPORT_COMPLETED = "export_completed"
 # Off the main path, but needed for the metrics that judge it.
 DIAGRAM_OUTCOME = "diagram_outcome"
 REGENERATION_REQUESTED = "regeneration_requested"
-QUOTA_REFUSED = "quota_refused"
 CHAT_EDIT_APPLIED = "chat_edit_applied"
 """P-M6-2. Recorded once per edit that actually reached the CPM, with the
 message that produced it in the payload — the trace from a chat message to

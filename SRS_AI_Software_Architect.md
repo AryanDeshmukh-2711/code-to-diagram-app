@@ -7,6 +7,16 @@
 **Conforms to:** IEEE 830-1998 structure, updated for ISO/IEC/IEEE 29148:2018 terminology
 **Scope of this document:** Release V1 only. V2/V3 features are listed as out of scope in §2.7.
 
+> **Note (2026-08-05):** This document was written for the project's original
+> commercial-SaaS phase. The project has since pivoted to an open-source,
+> local-first, single-user tool — it runs against the operator's own machine
+> and their own LLM, with no accounts and no billing. The account/quota/tier
+> requirements (former FR-21/FR-22/NFR-S2/NFR-M4) have been removed to match,
+> and FR-20 (watermarking) with it. Surrounding infrastructure-scaling
+> assumptions elsewhere in this document (multi-tenant, horizontally
+> scalable) describe that earlier phase and have not been rewritten.
+> CLAUDE.md is the current source of truth for product direction.
+
 ---
 
 ## Table of Contents
@@ -101,11 +111,10 @@ A new, self-contained web product. It integrates with third-party LLM providers 
 - **C-2** The LLM shall be accessed through a provider abstraction layer. No model identifier shall appear outside that layer.
 - **C-3** Every artefact shall be rendered from the CPM. No artefact shall be produced by an independent LLM call that bypasses the CPM, as this is what causes cross-diagram inconsistency.
 - **C-4** All long-running generation shall execute in an asynchronous job queue, not in the HTTP request cycle.
-- **C-5** Uploaded documents and generated artefacts are user data and shall be isolated per user.
 
 ### 2.6 Assumptions and Dependencies
 
-- **A-1** Third-party LLM APIs remain available at commercially viable per-token pricing.
+- **A-1** If a hosted LLM provider is configured in place of the local default, its API shall remain available at commercially viable per-token pricing. The default (local Ollama) has no such dependency: inference is free and offline.
 - **A-2** The user can describe their project in at least 50 words of natural language.
 - **A-3** Target institutions' document templates are obtainable and finite in number.
 - **D-1** Dependency on PlantUML (requires a JVM or a hosted rendering service).
@@ -132,7 +141,7 @@ Repository/ZIP ingestion, AST parsing, dependency graphs, folder-structure diagr
 | **Document Service** | Section assembly, figure numbering, template application, PDF/DOCX rendering |
 | **Job Queue / Workers** | Asynchronous execution of generation runs |
 | **Object Storage** | Uploads and generated binary artefacts |
-| **LLM Gateway** | Provider abstraction, routing, retry, cost accounting, caching |
+| **LLM Gateway** | Provider abstraction, routing, retry, usage observability, caching |
 
 ### 3.2 Processing Pipeline
 
@@ -278,13 +287,9 @@ Figure numbers, section numbers and the index table shall be generated automatic
 *Priority:* P0 — PNG and SVG per diagram.
 **FR-19 — Source export**
 *Priority:* P1 — PlantUML and Mermaid source per diagram.
-**FR-20 — Watermarking**
-*Priority:* P0 — free-tier exports shall carry a visible watermark; paid-tier exports shall not.
 
-### 5.6 Account, Quota and Project Management
+### 5.6 Project Management
 
-**FR-21** Users shall authenticate via email or an OAuth provider. *(P0)*
-**FR-22** The system shall enforce per-tier limits on projects, generation runs and export format availability. *(P0)*
 **FR-23** Users shall be able to list, open, rename, duplicate and delete their projects. *(P1)*
 **FR-24** Deleting a project shall remove its artefacts from object storage within 24 hours. *(P1)*
 
@@ -318,13 +323,11 @@ CPM
 
 | Entity | Key fields | Notes |
 |---|---|---|
-| User | id, email, tier, createdAt | |
-| Project | id, userId, name, inputType, createdAt | |
+| Project | id, name, inputType, createdAt | |
 | CPMVersion | id, projectId, version, payload (JSONB), confirmedAt | Immutable |
 | GenerationRun | id, projectId, cpmVersionId, status, startedAt, completedAt, cost | |
 | Artefact | id, runId, type, format, storageKey, status | |
 | Template | id, ownerId (nullable for built-ins), name, config | |
-| UsageQuota | userId, period, runsUsed, exportsUsed | |
 
 ### 6.3 Retention
 
@@ -369,7 +372,6 @@ CPM
 | ID | Requirement |
 |---|---|
 | NFR-S1 | TLS in transit; encryption at rest for uploads and artefacts |
-| NFR-S2 | Strict per-user authorisation on every project and artefact read |
 | NFR-S3 | Uploaded content shall be treated as untrusted data and never as instructions to the model |
 | NFR-S4 | Signed, expiring URLs for all artefact downloads |
 | NFR-S5 | Rate limiting per user and per IP on all generation endpoints |
@@ -399,7 +401,6 @@ CPM
 | NFR-M1 | Swapping LLM provider shall require changes only within the LLM Gateway |
 | NFR-M2 | Adding a diagram type shall require only a new CPM→source mapper, with no change to ingestion, extraction or document assembly |
 | NFR-M3 | Per-run LLM cost shall be recorded and attributable to a user |
-| NFR-M4 | Median per-run inference cost shall remain below 15% of the lowest paid tier's per-run revenue at expected usage |
 
 ---
 
@@ -493,7 +494,7 @@ This table is a binding design decision arising from constraint C-1 and risk R7.
 | F-03, F-04 | FR-4, FR-5, FR-6, FR-7 |
 | F-05, F-06 | FR-8, FR-9, FR-10, FR-11 |
 | F-07 | FR-13, FR-16 |
-| F-08, F-09, F-10 | FR-17, FR-18, FR-19, FR-20 |
+| F-08, F-09, F-10 | FR-17, FR-18, FR-19 |
 | F-11, F-12 | FR-14, FR-15 |
 | F-13 | FR-12 |
 | F-14 | FR-23, FR-24 |

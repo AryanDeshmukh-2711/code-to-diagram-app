@@ -11,8 +11,6 @@ function result(overrides: Partial<ExportResult> = {}): ExportResult {
     url: "/exports/exp_1/download?token=t",
     bytes: 40_000,
     error: null,
-    watermarked: false,
-    tier: "free",
     ...overrides,
   };
 }
@@ -24,14 +22,9 @@ describe("exportProgressNarration", () => {
 });
 
 describe("exportOutcomeNarration", () => {
-  it("reports success plainly, with no watermark mention when there is none", () => {
-    const text = exportOutcomeNarration(result({ watermarked: false }));
+  it("reports success plainly", () => {
+    const text = exportOutcomeNarration(result());
     expect(text).toBe("Your PDF is ready.");
-  });
-
-  it("mentions the watermark only when the backend's own field says so", () => {
-    const text = exportOutcomeNarration(result({ watermarked: true }));
-    expect(text).toBe("Your PDF is ready. It carries a watermark.");
   });
 
   it("reports the backend's own error on failure", () => {

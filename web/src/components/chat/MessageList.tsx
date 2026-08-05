@@ -8,9 +8,7 @@ import { DiagramProgressCard } from "@/components/chat/cards/DiagramProgressCard
 import { ExportReadyCard } from "@/components/chat/cards/ExportReadyCard";
 import { ExportSetupCard } from "@/components/chat/cards/ExportSetupCard";
 import { NeedsPngCard } from "@/components/chat/cards/NeedsPngCard";
-import { QuotaRefusalCard } from "@/components/chat/cards/QuotaRefusalCard";
 import { ReviewSummaryCard } from "@/components/chat/cards/ReviewSummaryCard";
-import { SessionExpiredCard } from "@/components/chat/cards/SessionExpiredCard";
 import { StreamingText } from "@/components/chat/StreamingText";
 import type { Review } from "@/lib/review";
 
@@ -29,9 +27,6 @@ export type MessageListProps = {
   exportSubmittingId?: string | null;
   /** Wired to a needs-png card's Render PNG button. */
   onRenderPng?: (cpmVersionId: string) => void;
-  /** Wired to a quota-refusal card's format-retry button — see
-   * QuotaRefusalCard's own docstring for when it appears. */
-  onRetryFormat?: (cpmVersionId: string, format: string) => void;
   busy?: boolean;
 };
 
@@ -42,7 +37,6 @@ export function MessageList({
   onExportSubmit,
   exportSubmittingId = null,
   onRenderPng,
-  onRetryFormat,
   busy = false,
 }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -62,7 +56,6 @@ export function MessageList({
           onExportSubmit={onExportSubmit}
           exportSubmittingId={exportSubmittingId}
           onRenderPng={onRenderPng}
-          onRetryFormat={onRetryFormat}
           busy={busy}
         />
       ))}
@@ -78,7 +71,6 @@ type RowProps = {
   onExportSubmit?: (messageId: string, templateId: string, fields: Record<string, string>) => void;
   exportSubmittingId: string | null;
   onRenderPng?: (cpmVersionId: string) => void;
-  onRetryFormat?: (cpmVersionId: string, format: string) => void;
   busy: boolean;
 };
 
@@ -98,7 +90,6 @@ function MessageContent({
   onExportSubmit,
   exportSubmittingId,
   onRenderPng,
-  onRetryFormat,
   busy,
 }: RowProps) {
   switch (message.kind) {
@@ -163,18 +154,5 @@ function MessageContent({
 
     case "export-ready":
       return <ExportReadyCard export={message.export} />;
-
-    case "quota-refusal":
-      return (
-        <QuotaRefusalCard
-          refusal={message.refusal}
-          cpmVersionId={message.cpmVersionId}
-          busy={busy}
-          onRetryFormat={onRetryFormat}
-        />
-      );
-
-    case "session-expired":
-      return <SessionExpiredCard returnTo={message.returnTo} />;
   }
 }

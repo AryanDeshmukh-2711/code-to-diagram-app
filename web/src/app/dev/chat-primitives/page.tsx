@@ -33,7 +33,6 @@ const SAMPLE_RUN: Run = {
   projectId: "demo",
   cpmVersionId: "cpmv_demo",
   status: "running",
-  tier: "free",
   kind: "full",
   parentRunId: null,
   requestedTypes: ["class", "useCase", "sequence", "activity"],
@@ -56,8 +55,6 @@ const SAMPLE_EXPORT: ExportResult = {
   url: "/exports/exp_demo/download?token=demo",
   bytes: 184_320,
   error: null,
-  watermarked: true,
-  tier: "free",
 };
 
 async function* typewriter(sentence: string): AsyncIterable<string> {

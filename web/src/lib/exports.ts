@@ -13,10 +13,6 @@ export type ExportResult = {
   url: string | null;
   bytes: number | null;
   error: string | null;
-  /** The backend's own call on whether this file carries a watermark — never
-   * inferred client-side from tier name or format. */
-  watermarked: boolean;
-  tier: string | null;
 };
 
 /** 202: queues rendering and returns immediately (C-4). */
@@ -44,9 +40,9 @@ export type TemplateSummary = {
   fields: TemplateFieldInfo[];
 };
 
-/** Every template this account's tier may export with (FR-15) — the chat
- * surface reads field labels, placeholders and required-ness from here and
- * invents none of its own copy for them. */
+/** Every template available to export with (FR-15) — the chat surface reads
+ * field labels, placeholders and required-ness from here and invents none
+ * of its own copy for them. */
 export async function listTemplates(): Promise<TemplateSummary[]> {
   return apiFetch<TemplateSummary[]>("/templates");
 }

@@ -15,7 +15,7 @@ from analytics import events
 from analytics.review_signals import ReviewSignals
 from cpm.fixtures import library_management_system_payload
 from cpm.schema import CPMDraft
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 from review import EditIn, ReviewError, apply_edit_op, confirm_draft, review_state
 from review.state import NotConfirmable
@@ -23,7 +23,6 @@ from sqlalchemy import func, select
 from store.models import CPMDraftRow, CPMVersionRow
 from store.session import SessionFactory
 
-from app.core.identity import owned_project, require_account
 from app.core.projects import ensure_project
 
 router = APIRouter(prefix="/projects/{project_id}/review", tags=["review"])
@@ -89,9 +88,7 @@ def _present(
     )
 
 
-async def _load(session, project_id: str, account: str) -> CPMDraftRow:
-    # One place, so no endpoint can read a draft without proving ownership.
-    await owned_project(session, project_id, account)
+async def _load(session, project_id: str) -> CPMDraftRow:
     row = await session.get(CPMDraftRow, project_id)
     if row is None:
         raise HTTPException(
@@ -102,7 +99,7 @@ async def _load(session, project_id: str, account: str) -> CPMDraftRow:
 
 
 @router.post("/seed", response_model=ReviewOut)
-async def seed(project_id: str, body: SeedIn, account: str = Depends(require_account)) -> ReviewOut:
+async def seed(project_id: str, body: SeedIn) -> ReviewOut:
     """Put a model into review.
 
     With no body this loads the sample project, which is how the screen is
@@ -114,10 +111,7 @@ async def seed(project_id: str, body: SeedIn, account: str = Depends(require_acc
     async with SessionFactory() as session:
         row = await session.get(CPMDraftRow, project_id)
         if row is None:
-            # A new project is the thing the free tier counts (FR-22). Checked
-            # here, in the request, against the database — the button in the
-            # browser is a courtesy, not the lock.
-            await ensure_project(session, project_id, account, body.projectName)
+            await ensure_project(session, project_id, body.projectName)
             row = CPMDraftRow(project_id=project_id)
             session.add(row)
         row.project_name = body.projectName
@@ -127,16 +121,16 @@ async def seed(project_id: str, body: SeedIn, account: str = Depends(require_acc
 
 
 @router.get("", response_model=ReviewOut)
-async def get_review(project_id: str, account: str = Depends(require_account)) -> ReviewOut:
+async def get_review(project_id: str) -> ReviewOut:
     async with SessionFactory() as session:
-        row = await _load(session, project_id, account)
+        row = await _load(session, project_id)
         return _present(row, CPMDraft.model_validate(row.payload))
 
 
 @router.post("/edit", response_model=ReviewOut)
-async def edit(project_id: str, body: EditIn, account: str = Depends(require_account)) -> ReviewOut:
+async def edit(project_id: str, body: EditIn) -> ReviewOut:
     async with SessionFactory() as session:
-        row = await _load(session, project_id, account)
+        row = await _load(session, project_id)
         draft = CPMDraft.model_validate(row.payload)
 
         try:
@@ -184,14 +178,10 @@ def _reviewable_items(draft) -> int:
 
 
 @router.post("/confirm", response_model=ConfirmOut)
-async def confirm(
-    project_id: str,
-    body: ConfirmIn | None = None,
-    account: str = Depends(require_account),
-) -> ConfirmOut:
+async def confirm(project_id: str, body: ConfirmIn | None = None) -> ConfirmOut:
     """The gate (FR-6). Writes an immutable version (FR-7)."""
     async with SessionFactory() as session:
-        row = await _load(session, project_id, account)
+        row = await _load(session, project_id)
         draft = CPMDraft.model_validate(row.payload)
 
         try:
@@ -231,7 +221,6 @@ async def confirm(
         await events.record(
             session,
             events.CPM_CONFIRMED,
-            account_id=(account if body else None),
             project_id=project_id,
             payload={**signals.as_payload(), "cpmVersionId": stored.id, "version": version},
         )

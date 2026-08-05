@@ -2,17 +2,22 @@
 
 ## What this is
 
-A web app that turns a text description or requirements PDF into a complete,
-submission-ready deliverable: 8 UML/ER diagrams + a formatted IEEE-830 SRS,
-exported as PDF/DOCX in the user's required template.
+An open-source, local-first web app that turns a text description or
+requirements PDF into a complete, submission-ready deliverable: 8 UML/ER
+diagrams + a formatted IEEE-830 SRS, exported as PDF/DOCX in the user's
+required template. It runs against the operator's own machine and their own
+local LLM — no accounts, no billing, no infrastructure to meter.
 
 The unit of value is a FINISHED DOCUMENT SET, not a diagram.
-Competitors sell diagram editors. We sell the finished deliverable.
+Tools that stop at a diagram editor leave the actual submission — the SRS,
+the template compliance, the cross-diagram consistency — as homework.
 
 ## Primary user
 
 Engineering student who must submit an SRS + fixed UML set in a
-university-mandated template. Time-poor, format-anxious, price-sensitive.
+university-mandated template. Time-poor, format-anxious, running this
+locally on their own hardware — the only real constraint is what their
+machine can do.
 
 ## THE ONE ARCHITECTURAL RULE
 

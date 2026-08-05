@@ -227,7 +227,9 @@ def _canonicalise_components(components: list[Component], notes: list[str]) -> l
     reference) is left as-is beyond the usual whitespace/case cleanup — only
     an actual match gets rewritten, never invented.
     """
-    canonical_by_key = {canonical_name_key(component.name): component.name for component in components}
+    canonical_by_key = {
+        canonical_name_key(component.name): component.name for component in components
+    }
 
     def canonicalise(name: str) -> str:
         return canonical_by_key.get(canonical_name_key(name), normalise_display_name(name))

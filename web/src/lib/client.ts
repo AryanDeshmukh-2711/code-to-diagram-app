@@ -1,18 +1,12 @@
 /**
- * The one place that knows the API's base URL and how to attach a session.
+ * The one place that knows the API's base URL.
  *
- * Every other lib module (auth, review, runs, exports, extraction, chat)
- * calls `apiFetch` or `streamJson` rather than `fetch` directly. That is the
- * whole point: a second hand-rolled fetch wrapper is how a client silently
- * stops sending the Authorization header, or stops handling a 401, in one
- * corner of the app while every other corner keeps working.
- *
- * A 401 is handled once, here, for the same reason: whatever endpoint
- * produced it, the session is no longer good for anything, so the outcome —
- * clear it, send the user back to sign in — must be identical everywhere.
+ * Every other lib module (review, runs, exports, extraction, chat) calls
+ * `apiFetch` or `streamJson` rather than `fetch` directly. That is the whole
+ * point: a second hand-rolled fetch wrapper is how a client silently drifts
+ * from the real one in one corner of the app while every other corner keeps
+ * working.
  */
-
-import { clearSession, getToken } from "@/lib/session";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
@@ -36,28 +30,6 @@ export class ApiError extends Error {
   }
 }
 
-type Unauthorized = () => void;
-
-const defaultUnauthorized: Unauthorized = () => {
-  clearSession();
-  if (typeof window !== "undefined") window.location.href = "/signin";
-};
-
-let onUnauthorized: Unauthorized = defaultUnauthorized;
-
-/** Swaps the 401 handler. Most callers are tests, but ChatSession is a real
- * production one (P-M6-11): the default's hard redirect is exactly the
- * silently-abandoned conversation a 401 mid-chat must not cause, so it
- * overrides this for as long as it is mounted and restores the default on
- * unmount. */
-export function _setUnauthorizedHandler(handler: Unauthorized): void {
-  onUnauthorized = handler;
-}
-
-export function _resetUnauthorizedHandler(): void {
-  onUnauthorized = defaultUnauthorized;
-}
-
 type RequestOptions = {
   method?: string;
   body?: unknown;
@@ -70,8 +42,6 @@ type RequestOptions = {
 
 export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const headers: Record<string, string> = {};
-  const token = getToken();
-  if (token) headers.Authorization = `Bearer ${token}`;
 
   let body: BodyInit | undefined;
   if (options.body !== undefined) {
@@ -90,11 +60,6 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
     signal: options.signal,
     cache: "no-store",
   });
-
-  if (response.status === 401) {
-    onUnauthorized();
-    throw new ApiError(401, "Your session has expired. Please sign in again.");
-  }
 
   if (!response.ok) {
     const { message, code, detail } = await _detail(response);
@@ -125,24 +90,18 @@ async function _detail(response: Response): Promise<Detail> {
 /**
  * Server-sent progress, consumed with `fetch` rather than `EventSource`.
  *
- * `EventSource` cannot set an Authorization header, and every progress stream
- * this product has (runs, extraction, chat) is behind one — so the frames are
- * read off the response body by hand instead. The wire format is unchanged:
- * one `data: {...}\n\n` per state change, connection closed by the server on
- * a terminal state.
+ * `EventSource` cannot set custom headers or a request body, which is the
+ * only reason this reads frames off the response body by hand instead — the
+ * wire format is otherwise unchanged: one `data: {...}\n\n` per state
+ * change, connection closed by the server on a terminal state.
  */
 export function streamJson<T>(path: string, onEvent: (payload: T) => void): () => void {
   const controller = new AbortController();
 
   void (async () => {
-    const headers: Record<string, string> = {};
-    const token = getToken();
-    if (token) headers.Authorization = `Bearer ${token}`;
-
     let response: Response;
     try {
       response = await fetch(`${API_BASE_URL}${path}`, {
-        headers,
         signal: controller.signal,
         cache: "no-store",
       });
@@ -150,10 +109,6 @@ export function streamJson<T>(path: string, onEvent: (payload: T) => void): () =
       return; // aborted, or the network dropped — nothing more to report
     }
 
-    if (response.status === 401) {
-      onUnauthorized();
-      return;
-    }
     if (!response.ok || !response.body) return;
 
     const reader = response.body.getReader();

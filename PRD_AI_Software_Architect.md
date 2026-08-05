@@ -6,6 +6,15 @@
 **Date:** 30 July 2026
 **Status:** Draft for review
 
+> **Note (2026-08-05):** This document was written for the project's original
+> commercial-SaaS phase. The project has since pivoted to an open-source,
+> local-first, single-user tool — it runs against the operator's own machine
+> and their own LLM, with no accounts and no billing. The specific
+> pricing/tier/account references below have been corrected to match; the
+> surrounding narrative (competitive positioning, hosted-infrastructure
+> framing) describes that earlier phase and has not been rewritten. CLAUDE.md
+> is the current source of truth for product direction.
+
 ---
 
 ## 1. Summary
@@ -90,7 +99,7 @@ These are deferred deliberately. Each one is a project in itself.
 
 ### 5.1 Primary — "Submission-driven student" (V1 focus)
 
-Final-year / pre-final-year engineering student in a CS/IT programme. Must submit an SRS and a fixed set of UML diagrams for a mini-project or capstone, in a template the department mandates. Time-poor, format-anxious, price-sensitive (₹200–500/semester is acceptable, ₹2000 is not). Highly clustered — one campus contains thousands of them, and they share tools by word of mouth.
+Final-year / pre-final-year engineering student in a CS/IT programme. Must submit an SRS and a fixed set of UML diagrams for a mini-project or capstone, in a template the department mandates. Time-poor, format-anxious, running the tool locally against their own machine and their own LLM. Highly clustered — one campus contains thousands of them, and they share tools by word of mouth.
 
 **Why start here:** urgent, recurring, deadline-driven, easy to reach, and the deliverable format is knowable and finite.
 
@@ -187,7 +196,6 @@ The **canonical model review** step is the product's differentiator and must not
 | Activation — % of signups reaching a completed export | ≥ 35% |
 | Time to first export | < 6 minutes median |
 | Diagram set acceptance — % exported without regeneration | ≥ 60% |
-| Free → paid conversion | ≥ 4% |
 | Retention — % returning within 60 days | ≥ 20% |
 | Referral coefficient within a single campus | ≥ 0.3 |
 
@@ -197,16 +205,11 @@ The **canonical model review** step is the product's differentiator and must not
 
 ## 10. Monetisation
 
-All figures are **hypotheses to validate**, not decisions.
-
-| Tier | Price (hypothesis) | Includes |
-|---|---|---|
-| Free | ₹0 | 2 projects, watermarked PDF export, PNG only |
-| Student | ₹299 / month or ₹799 / semester | Unlimited projects, no watermark, DOCX + PDF, custom template upload |
-| Pro | ₹1,499 / month | Everything, priority generation, API access, code input (V2) |
-| Team / Institution | Custom | Per-department licence, institution template pre-loaded, bulk seats |
-
-**Institution licensing is the most interesting line.** Selling one department a template-preloaded licence for 400 students converts a price-sensitive individual sale into a single institutional invoice. Test this early.
+**Historical.** This section described a commercial-SaaS pricing model from an
+earlier phase of the project. The project has since pivoted to an
+open-source, local-first tool: it runs against the operator's own machine
+and their own local LLM, so there is no infrastructure cost to meter and
+nobody to bill. See CLAUDE.md for the current product direction.
 
 ---
 
@@ -216,7 +219,6 @@ All figures are **hypotheses to validate**, not decisions.
 |---|---|---|---|
 | R1 | Output is plausible but wrong; user submits it and is penalised | **High** | Mandatory model-review gate; never present output as authoritative; validation pass on diagram syntax before render |
 | R2 | Commodity pressure — free tools reach parity on generation | **High** | Compete on the deliverable and template compliance, not on generation quality |
-| R3 | LLM inference cost exceeds revenue at ₹299/tier | Medium | Cache aggressively; render diagrams deterministically from the model rather than re-prompting; hard per-tier generation quotas |
 | R4 | Scope creep back toward the full original vision | **High** | Non-goals in §4.2 are contractual; V2 requires meeting the V1 kill criterion first |
 | R5 | Academic integrity objection from institutions | Medium | Position as a drafting and formatting assistant; user-editable model; maintain an audit trail of user edits |
 | R6 | Large-codebase understanding proves unreliable in V2 | Medium | Deferred entirely out of V1; V2 begins with a narrow language scope (one language, one framework) |
@@ -241,10 +243,9 @@ All figures are **hypotheses to validate**, not decisions.
 ## 13. Open Questions
 
 1. Does the canonical-model review step increase output trust enough to justify the added friction — or does it cause drop-off? **Test in M5.**
-2. Will departments buy an institutional licence, or must this stay a direct-to-student product?
-3. Is PDF requirement input actually used, or do users only ever paste text? If the latter, drop PDF from V1 and save a week.
-4. Which specific university templates cover the largest addressable population? Collect real files in M0.
-5. Is DOCX export or PDF export the true must-have? DOCX allows the student to edit afterwards and may matter more.
+2. Is PDF requirement input actually used, or do users only ever paste text? If the latter, drop PDF from V1 and save a week.
+3. Which specific university templates cover the largest addressable population? Collect real files in M0.
+4. Is DOCX export or PDF export the true must-have? DOCX allows the student to edit afterwards and may matter more.
 
 ---
 

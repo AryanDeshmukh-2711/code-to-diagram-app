@@ -110,23 +110,16 @@ make at1
 
 ## Using the API
 
+No sign-in step — a single-user local tool has no one to authenticate a
+caller against.
+
 ```bash
-# 1. Register — the key is shown once and never again
-curl -sX POST localhost:8000/auth/register -H 'content-type: application/json' \
-  -d '{"tier":"pro"}'
-
-# 2. Trade the key for a 12-hour session
-curl -sX POST localhost:8000/auth/token -H 'content-type: application/json' \
-  -d '{"accountId":"acct_...","apiKey":"..."}'
-
-# 3. Everything else carries the bearer token
 curl -sX POST localhost:8000/projects/my-project/review/seed \
-  -H 'authorization: Bearer ...' -H 'content-type: application/json' -d '{}'
+  -H 'content-type: application/json' -d '{}'
 ```
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /auth/register` · `POST /auth/token` | Account creation, session |
 | `POST /projects/{id}/review/seed` | Put a model into review |
 | `GET  /projects/{id}/review` | Current draft, validation issues, confirmable |
 | `POST /projects/{id}/review/edit` | One structural edit (renames cascade) |
@@ -145,7 +138,7 @@ curl -sX POST localhost:8000/projects/my-project/review/seed \
 ## Architecture
 
 ```
-├── api/          FastAPI — HTTP surface, auth, quota, alembic migrations
+├── api/          FastAPI — HTTP surface, alembic migrations
 ├── worker/       arq workers — every generation stage runs here, never in a request
 ├── web/          Next.js + TypeScript + Tailwind + shadcn/ui
 ├── shared/       everything both api and worker need — one definition, imported twice
@@ -157,14 +150,13 @@ curl -sX POST localhost:8000/projects/my-project/review/seed \
 │   ├── generation/     run orchestration, regeneration, export
 │   ├── review/         edit operations, the confirm gate
 │   ├── srs/            document AST, IEEE 830 layout, templates, PDF + DOCX exporters
-│   ├── billing/        tiers, quotas, the margin query
 │   ├── analytics/      funnel events, metrics, dashboard
 │   └── store/          SQLAlchemy models shared by both services
 └── acceptance/   AT-1 — the end-to-end definition of "V1 works"
 ```
 
 **Services:** `postgres` · `redis` · `plantuml` · `kroki` (Mermaid, opt-in
-profile) · `api` · `worker` · `worker-priority` · `web`
+profile) · `api` · `worker` · `web`
 
 **Stack is fixed:** Next.js/TypeScript/Tailwind/shadcn, FastAPI, PostgreSQL
 (JSONB for CPM payloads), Redis + arq, S3-compatible storage, PlantUML primary
@@ -194,13 +186,9 @@ several have a planted-regression check proving the test is not vacuous.
 | **FR-11** | Diagram source validated before it is shown | Engine round-trip, one retry, failure contained to one figure |
 | **FR-12** | Regenerate one diagram, not the set | Child run carries the rest forward; an unchanged model is *reported*, not silently redrawn |
 | **FR-16** | Every diagram embedded, numbered, captioned | An unplaced diagram type lands in an appendix rather than vanishing |
-| **FR-20** | Free-tier watermark applied at render time | Drawn into each page's own content stream; the module imports no PDF reader, so a second pass is not available to it |
-| **FR-22** | Quotas enforced server-side | Two AST guards: routes must call the quota service, and no route may take identity from a body |
-| **NFR-S2** | No account can read another's work | Ownership checked on every path; a miss returns 404, never 403 |
 | **NFR-S3** | Uploads are data, never instructions | Delimited, with neutralisation of the closing token |
 | **NFR-S4** | Download links signed and expiring | HMAC over id + deadline, constant-time compare |
 | **NFR-Q4** | No unresolved placeholder survives | Asserted over every string in the document AST |
-| **NFR-M3/M4** | Cost per run recorded; margin per tier | The tier is stored *on the run*, so an upgrade cannot rewrite last month's costs |
 
 ### Two design decisions worth reading
 
@@ -282,32 +270,6 @@ fails if it ever names a template id in code.
 
 ---
 
-## Tiers and quotas
-
-Limits live in `shared/billing/tiers.json`, read per call — a test edits the file
-and watches the limit move.
-
-| | Free | Student | Pro |
-|---|---|---|---|
-| Projects | 2 | unlimited | unlimited |
-| Runs/month | 20 | 300 | unlimited |
-| Watermark | yes | no | no |
-| Exports | PDF | PDF + DOCX | PDF + DOCX |
-| Diagrams | PNG | PNG + SVG | PNG + SVG |
-| Queue | default | default | priority pool |
-
-Refusals are non-punitive, and a test enforces it — the test fails if a message
-contains "denied", "forbidden", "violation" or "not allowed":
-
-> You have 2 of 2 projects on the Free plan. Delete one you have finished with to
-> start another, or move up a plan — everything you have made stays where it is.
-
-`make margin` reports median (not mean) inference cost per run against tier
-revenue. Median, because cost per run is long-tailed and a plan priced against a
-mean is priced against a customer who does not exist.
-
----
-
 ## Make targets
 
 | | |
@@ -316,7 +278,6 @@ mean is priced against a customer who does not exist.
 | `make down` | Stop **and delete volumes** — use `docker compose down` to keep data |
 | `make test` | api, shared and web test suites |
 | `make at1` | Acceptance test AT-1, end to end |
-| `make margin` | Margin per tier against inference cost |
 | `make lint` / `make fmt` | Ruff, plus generated-file drift checks |
 | `make types` | Regenerate the CPM JSON Schema **and** the TypeScript types from it |
 | `make golden` | Regenerate golden diagram sources, then review the diff |
@@ -352,7 +313,7 @@ The model name appears in exactly one file, and a test keeps it that way.
 
 Working end to end and covered by tests: extraction, the review gate, all eight
 mappers, the consistency validator, selective regeneration, SRS assembly, both
-exporters, the template system, auth, quotas, and the metrics dashboard.
+exporters, the template system, and the metrics dashboard.
 
 Known gaps, stated plainly:
 
@@ -365,8 +326,6 @@ Known gaps, stated plainly:
 - **The shipped templates are archetypes.** They were reconstructed rather than
   collected from real departments, and each declares this in an `origin` field.
   Swapping in genuine ones is what will actually validate the schema.
-- **Session tokens have no revocation list.** Rotating an account's key
-  invalidates every token minted from it; there is no per-token revoke.
 - **Artefacts live in the database.** A run is under a megabyte, so object
   storage is not yet pulling its weight. The `storage_key` column exists so
   moving to R2 is a backfill rather than a migration of the read path.

@@ -28,16 +28,11 @@ from srs.export import pdf as pdf_module
 from srs.export.compare import compare, docx_body_words, figure_vocabulary, pdf_body_words
 from srs.export.docx import export_docx
 from srs.export.pdf import UnrenderableFigure, export_pdf
-from srs.export.template import A4, FREE_TIER, IEEE_TIMES, US_LETTER, Watermark
+from srs.export.template import A4, IEEE_TIMES, US_LETTER
 from srs.ieee830 import CAPTIONS, FigureInput
 
 PNG = sample_png()
 RENDERED = ("class", "entity_relationship", "use_case", "sequence")
-
-ASCII_MARK = Watermark(text="SAMPLE - FREE PLAN", subtext="Upgrade to remove")
-"""Plain ASCII so the assertion can look for it in a raw content stream without
-arguing with PDF string encoding. The shipped FREE_TIER mark is checked
-separately for the things encoding cannot affect."""
 
 
 def inputs(*types: str, mime: str = "image/png", image: bytes | None = None):
@@ -216,7 +211,7 @@ async def test_a_raster_is_sized_from_its_dpi_not_its_pixel_count(cpm) -> None:
 
 
 # --------------------------------------------------------------------------
-# FR-20: the watermark, at render time
+# The exporter never reopens its own output
 # --------------------------------------------------------------------------
 
 
@@ -224,39 +219,9 @@ def _content_streams(result) -> list[bytes]:
     return [page.get_contents().get_data() for page in reader_of(result).pages]
 
 
-async def test_the_watermark_is_in_every_page_content_stream(document) -> None:
-    result = export_pdf(document, A4, ASCII_MARK)
-    streams = _content_streams(result)
-
-    assert streams
-    for index, stream in enumerate(streams):
-        assert ASCII_MARK.text.encode() in stream, f"page {index + 1} carries no watermark"
-
-
-async def test_the_watermark_is_drawn_not_overlaid(document) -> None:
-    """The distinction FR-20 asks for, made checkable.
-
-    An overlay applied afterwards arrives as a separate form XObject merged
-    into each page — the page's own content stream would not contain the text.
-    Here it does, because the mark was drawn while the page was being written.
-    """
-    result = export_pdf(document, A4, ASCII_MARK)
-    for page in reader_of(result).pages:
-        own_stream = page.get_contents().get_data()
-        assert ASCII_MARK.text.encode() in own_stream
-
-        resources = page.get("/Resources", {})
-        forms = [
-            name
-            for name, obj in (resources.get("/XObject", {}) or {}).items()
-            if obj.get_object().get("/Subtype") == "/Form"
-        ]
-        assert not forms, f"a form overlay was merged in: {forms}"
-
-
 def test_nothing_in_the_exporter_can_reopen_a_pdf() -> None:
-    # A post-render watermark needs a PDF reader. There is not one here, and
-    # this is what keeps "render time" from quietly becoming "second pass".
+    # Rendering happens once, into each page's own content stream, as that
+    # page is produced — there is no second pass over a finished file.
     tree = python_ast.parse(Path(pdf_module.__file__).read_text(encoding="utf-8"))
     imported = set()
     for node in python_ast.walk(tree):
@@ -267,32 +232,6 @@ def test_nothing_in_the_exporter_can_reopen_a_pdf() -> None:
 
     assert not imported & {"pypdf", "PyPDF2", "pikepdf", "fitz", "pdfrw"}
     assert not imported & {"docx"}, "the PDF exporter must not read the DOCX exporter's work"
-
-
-async def test_no_watermark_means_no_watermark(document) -> None:
-    plain = export_pdf(document, A4)
-    for stream in _content_streams(plain):
-        assert ASCII_MARK.text.encode() not in stream
-        assert b"Free plan" not in stream
-
-
-async def test_the_shipped_free_tier_mark_applies_to_every_page(document) -> None:
-    marked = export_pdf(document, A4, FREE_TIER)
-    plain = export_pdf(document, A4)
-    # Encoding of an em dash is not worth asserting on; that the mark changes
-    # every page's content is.
-    assert marked.size > plain.size
-    assert len(_content_streams(marked)) == len(_content_streams(plain))
-
-
-async def test_a_long_watermark_is_scaled_to_fit_rather_than_clipped(document) -> None:
-    from srs.export.pdf import _watermark_size
-
-    long_mark = Watermark(text="A" * 120)
-    assert _watermark_size(long_mark, A4) < long_mark.size_pt
-    assert _watermark_size(ASCII_MARK, A4) == ASCII_MARK.size_pt
-
-    export_pdf(document, A4, long_mark)  # still renders
 
 
 # --------------------------------------------------------------------------
@@ -383,7 +322,7 @@ async def test_a_forty_page_document_exports_well_inside_the_budget() -> None:
     assembled = await assemble_srs(_inflated_cpm(60), inputs())
 
     started = time.perf_counter()
-    result = export_pdf(assembled.document, A4, FREE_TIER)
+    result = export_pdf(assembled.document, A4)
     elapsed = time.perf_counter() - started
 
     pages = len(reader_of(result).pages)

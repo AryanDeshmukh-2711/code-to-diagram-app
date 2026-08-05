@@ -6,7 +6,7 @@ export type Project = {
   createdAt: string;
 };
 
-/** Every project this account owns, most recently created first (FR-23). */
+/** Every project, most recently created first (FR-23). */
 export async function listProjects(): Promise<Project[]> {
   return apiFetch<Project[]>("/projects");
 }

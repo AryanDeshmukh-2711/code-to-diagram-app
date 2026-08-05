@@ -8,7 +8,7 @@ import { MessageList } from "@/components/chat/MessageList";
 import type { ChatMessage, ConfirmedVersion } from "@/components/chat/types";
 import { type ChatEdit, sendChatMessage, streamChatEdit } from "@/lib/chat";
 import { chatEditOutcomeNarration, chatEditProgressNarration } from "@/lib/chatEditNarration";
-import { _resetUnauthorizedHandler, _setUnauthorizedHandler, ApiError } from "@/lib/client";
+import { ApiError } from "@/lib/client";
 import { exportOutcomeNarration, exportProgressNarration } from "@/lib/exportNarration";
 import { looksLikeExportRequest, parseExportFormat } from "@/lib/exportIntent";
 import {
@@ -29,7 +29,6 @@ import { looksLikeGenerateRequest } from "@/lib/generateIntent";
 import { historyNarration } from "@/lib/historyNarration";
 import { looksLikeHistoryRequest } from "@/lib/historyIntent";
 import { extractionOutcomeNarration, extractionProgressNarration } from "@/lib/narration";
-import { quotaRefusal } from "@/lib/quota";
 import { confirmReview, loadReview, type Review, ReviewRefused } from "@/lib/review";
 import { regeneratePlanNarration } from "@/lib/regenerateNarration";
 import { looksLikeRegenerateRequest } from "@/lib/regenerateIntent";
@@ -43,7 +42,6 @@ import {
   startRun,
   streamRun,
 } from "@/lib/runs";
-import { clearSession } from "@/lib/session";
 
 function newId(): string {
   return typeof crypto !== "undefined" && crypto.randomUUID
@@ -72,8 +70,7 @@ type PendingClarification = {
 /**
  * Wires the composer to real extraction (P-M6-1), real chat edit-intent
  * parsing (P-M6-2), the confirm gate (P-M6-7), diagram generation (P-M6-8),
- * regeneration + lineage (P-M6-9), export (P-M6-10), and quota/billing/auth
- * messaging (P-M6-11).
+ * regeneration + lineage (P-M6-9), and export (P-M6-10).
  *
  * Everything narrated here comes straight off the row the backend returns
  * for whichever job is in flight: lib/narration.ts, lib/chatEditNarration.ts,
@@ -128,18 +125,6 @@ type PendingClarification = {
  * attempt; a retry is a new attempt; nothing here re-runs extraction twice on
  * the same text or invents entities the description does not support.
  *
- * Quota, billing and auth messages (P-M6-11) are canonical API output, not
- * narration: `reportApiError` is the one place every catch block in this
- * component funnels through, and it never lets a 402 or a 401 reach the
- * generic "assistant said something went wrong" bubble every other error
- * does. A 402 becomes a QuotaRefusalCard carrying `code`, `message`, `tier`,
- * `limit`, `used`, `upgradeTo` and `upgradeGives` exactly as
- * `billing/quota.py` wrote them (lib/quota.ts). A 401 becomes a
- * SessionExpiredCard rather than the dead conversation a silent
- * `window.location.href` redirect would leave behind: this component
- * overrides `client.ts`'s default unauthorized handler for as long as it is
- * mounted specifically so that redirect never fires out from under an
- * in-progress action, and restores the default on unmount.
  */
 export function ChatSession({ projectId }: { projectId: string }) {
   const [messages, setMessages] = useState<ChatMessage[]>(() => [
@@ -169,16 +154,7 @@ export function ChatSession({ projectId }: { projectId: string }) {
   const activeStream = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    // While this session is mounted, a 401 must not silently navigate the
-    // page away — that is the "dead conversation" the DoD names. Clearing
-    // the stale token is still correct (nothing should keep sending it);
-    // only the redirect is suppressed, in favour of reportApiError's own
-    // inline SessionExpiredCard.
-    _setUnauthorizedHandler(() => clearSession());
-    return () => {
-      activeStream.current?.();
-      _resetUnauthorizedHandler();
-    };
+    return () => activeStream.current?.();
   }, []);
 
   function append(message: ChatMessage) {
@@ -201,46 +177,10 @@ export function ChatSession({ projectId }: { projectId: string }) {
     );
   }
 
-  /** Every catch block in this component funnels through here (P-M6-11).
-   * `narrationId`, when given, names the in-flight "…ing" bubble this action
-   * already posted — a 402 or 401 turns it into a short, generic pointer,
-   * never the canonical message itself, which appears in full in the card
-   * appended right after. Routing a quota refusal or a session expiry
-   * through the same "assistant said something went wrong" text every other
-   * error uses is exactly the Watch For this step names: that shortcut is
-   * what already reintroduced copy drift once. */
-  function reportApiError(
-    narrationId: string | null,
-    error: unknown,
-    fallback: string,
-    cpmVersionId?: string,
-  ) {
-    const refusal = quotaRefusal(error);
-    const expired = error instanceof ApiError && error.status === 401;
-
-    if (refusal || expired) {
-      if (narrationId) updateNarration(narrationId, "That didn't go through — see below.");
-      append(
-        refusal
-          ? {
-              id: newId(),
-              role: "assistant",
-              kind: "quota-refusal",
-              refusal,
-              cpmVersionId,
-              at: new Date().toISOString(),
-            }
-          : {
-              id: newId(),
-              role: "assistant",
-              kind: "session-expired",
-              returnTo: `/projects/${projectId}/chat`,
-              at: new Date().toISOString(),
-            },
-      );
-      return;
-    }
-
+  /** Every catch block in this component funnels through here, so an API
+   * failure is always reported the same way regardless of which action
+   * triggered it. */
+  function reportApiError(narrationId: string | null, error: unknown, fallback: string) {
     const message = error instanceof ApiError ? error.message : fallback;
     if (narrationId) {
       updateNarration(narrationId, message);
@@ -310,7 +250,7 @@ export function ChatSession({ projectId }: { projectId: string }) {
     try {
       run = await startRun(format ? { projectId, cpmVersionId, format } : { projectId, cpmVersionId });
     } catch (error) {
-      reportApiError(narrationId, error, "Something went wrong starting that.", cpmVersionId);
+      reportApiError(narrationId, error, "Something went wrong starting that.");
       setBusy(false);
       return;
     }
@@ -399,8 +339,8 @@ export function ChatSession({ projectId }: { projectId: string }) {
 
   /** "Export this as a PDF" -> collects the template and its own required
    * fields via one ExportSetupCard. GET /templates is the only thing this
-   * calls before that card exists — never a guess at what a tier or
-   * template allows. */
+   * calls before that card exists — never a guess at what a template
+   * allows. */
   async function beginExport(format: "pdf" | "docx") {
     if (!latestRunId || !latestConfirmedVersion) {
       append({
@@ -564,8 +504,6 @@ export function ChatSession({ projectId }: { projectId: string }) {
           at: new Date().toISOString(),
         });
       } else {
-        // A 401 surfaces here as a plain ApiError, not ReviewRefused — see
-        // review.ts's asReview docstring for why that distinction matters.
         reportApiError(null, error, "Something went wrong confirming that.");
       }
     } finally {
@@ -832,7 +770,6 @@ export function ChatSession({ projectId }: { projectId: string }) {
           onExportSubmit={onExportSubmit}
           exportSubmittingId={exportSubmittingId}
           onRenderPng={(cpmVersionId) => void runDiagramGeneration(cpmVersionId, "png")}
-          onRetryFormat={(cpmVersionId, format) => void runDiagramGeneration(cpmVersionId, format)}
           busy={busy}
         />
       </div>

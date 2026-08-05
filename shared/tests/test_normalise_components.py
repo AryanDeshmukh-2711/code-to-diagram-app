@@ -2,7 +2,7 @@
 spelling difference rather than a real inconsistency (a component's name
 written one way on itself and another way in a sibling's `requires`)."""
 
-from cpm.schema import CPMCollections, Component
+from cpm.schema import Component, CPMCollections
 from extraction.normalise import normalise
 
 
@@ -12,8 +12,15 @@ def _components(*components: Component) -> CPMCollections:
 
 def test_a_slug_shaped_requires_entry_is_rewritten_to_the_components_name() -> None:
     raw = _components(
-        Component(id="catalog-service", name="Catalog Service", type="service", provides=["Catalog Service"]),
-        Component(id="web-app", name="Web Application", type="service", requires=["catalog-service"]),
+        Component(
+            id="catalog-service",
+            name="Catalog Service",
+            type="service",
+            provides=["Catalog Service"],
+        ),
+        Component(
+            id="web-app", name="Web Application", type="service", requires=["catalog-service"]
+        ),
     )
 
     result = normalise(raw)
@@ -24,7 +31,12 @@ def test_a_slug_shaped_requires_entry_is_rewritten_to_the_components_name() -> N
 
 def test_a_provides_entry_matching_no_component_is_left_alone() -> None:
     raw = _components(
-        Component(id="catalog-service", name="Catalog Service", type="service", provides=["Book Search API"]),
+        Component(
+            id="catalog-service",
+            name="Catalog Service",
+            type="service",
+            provides=["Book Search API"],
+        ),
     )
 
     result = normalise(raw)
@@ -35,7 +47,9 @@ def test_a_provides_entry_matching_no_component_is_left_alone() -> None:
 
 def test_an_all_lowercase_interface_name_with_no_match_is_title_cased() -> None:
     raw = _components(
-        Component(id="loan-service", name="Loan Service", type="service", requires=["member database"]),
+        Component(
+            id="loan-service", name="Loan Service", type="service", requires=["member database"]
+        ),
     )
 
     result = normalise(raw)
@@ -55,7 +69,9 @@ def test_a_component_name_written_all_lowercase_is_title_cased() -> None:
 def test_canonicalisation_is_reported() -> None:
     raw = _components(
         Component(id="catalog-service", name="Catalog Service", type="service"),
-        Component(id="web-app", name="Web Application", type="service", requires=["catalog-service"]),
+        Component(
+            id="web-app", name="Web Application", type="service", requires=["catalog-service"]
+        ),
     )
 
     result = normalise(raw)
@@ -65,7 +81,12 @@ def test_canonicalisation_is_reported() -> None:
 
 def test_an_untouched_component_produces_no_note() -> None:
     raw = _components(
-        Component(id="catalog-service", name="Catalog Service", type="service", provides=["Catalog Service"]),
+        Component(
+            id="catalog-service",
+            name="Catalog Service",
+            type="service",
+            provides=["Catalog Service"],
+        ),
     )
 
     result = normalise(raw)

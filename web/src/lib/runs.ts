@@ -18,7 +18,6 @@ export type Run = {
   projectId: string;
   cpmVersionId: string;
   status: string;
-  tier: string | null;
   kind: string;
   parentRunId: string | null;
   requestedTypes: string[];

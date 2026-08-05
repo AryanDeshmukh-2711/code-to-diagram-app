@@ -13,9 +13,7 @@ dependencies = [
     # lets the exporter apply Heading 1/Caption rather than imitate them.
     "python-docx>=1.1",
     # PDF export. Pure Python like python-docx: no cairo, no pango, no system
-    # packages in the worker image. svglib draws the diagrams as real vector,
-    # and canvas access is what makes the FR-20 watermark render-time rather
-    # than a second pass over a finished file.
+    # packages in the worker image. svglib draws the diagrams as real vector.
     "reportlab>=4.2",
     "svglib>=1.5",
     # PDF ingestion (P-M6-1): a project description may arrive as a PDF, and
@@ -32,11 +30,10 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["cpm*", "llm*", "extraction*", "chat*", "diagrams*", "consistency*", "generation*", "review*", "store*", "srs*", "srs.export*", "srs.template*", "billing*", "analytics*"]
+include = ["cpm*", "llm*", "extraction*", "chat*", "diagrams*", "consistency*", "generation*", "review*", "store*", "srs*", "srs.export*", "srs.template*", "analytics*"]
 
 [tool.setuptools.package-data]
 cpm = ["fixtures/*.json"]
-billing = ["*.json", "*.sql"]
 analytics = ["*.sql"]
 "srs.template" = ["builtin/*.json"]
 

@@ -1,10 +1,9 @@
 """Requesting a document, collecting it, and the last step of the funnel.
 
-Three things converge here. It is where the tier's export entitlement is
-enforced (FR-22). It is where the funnel closes: a run that was generated and
-never exported is a drop-off, and until something recorded the export there was
-no way to see that drop. And, since the pre-launch review, it is the last
-generation path that stopped running inside an HTTP request.
+Two things converge here. It is where the funnel closes: a run that was
+generated and never exported is a drop-off, and until something recorded the
+export there was no way to see that drop. And, since the pre-launch review,
+it is the last generation path that stopped running inside an HTTP request.
 
 C-4 now holds everywhere. This endpoint checks, writes a row and enqueues; the
 worker assembles and renders; the finished file is collected through a signed,
@@ -18,8 +17,7 @@ from typing import Any
 from analytics import events
 from arq import create_pool
 from arq.connections import RedisSettings
-from billing.quota import QuotaExceeded, account_tier, check_export
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import Response
 from generation.export import gather_figures
 from pydantic import BaseModel, Field
@@ -30,14 +28,14 @@ from srs.template.apply import (
     available_templates,
     check_fields,
 )
-from store.models import ExportRow, GenerationArtefactRow
+from store.models import ExportRow, GenerationArtefactRow, GenerationRunRow
 from store.session import SessionFactory
 
 from app.core.config import get_settings
-from app.core.identity import owned_run, require_account, sign, verify
-from app.core.quota import as_http
+from app.core.identity import get_or_404, sign, verify
 
 router = APIRouter(prefix="/runs", tags=["exports"])
+DEFAULT_QUEUE = "arq:default"
 
 MEDIA = {
     "pdf": "application/pdf",
@@ -58,14 +56,10 @@ class ExportOut(BaseModel):
     url: str | None = None
     bytes: int | None = None
     error: str | None = None
-    watermarked: bool = False
-    tier: str | None = None
 
 
 @router.post("/{run_id}/export", status_code=status.HTTP_202_ACCEPTED)
-async def export_run(
-    run_id: str, body: ExportIn, account: str = Depends(require_account)
-) -> ExportOut:
+async def export_run(run_id: str, body: ExportIn) -> ExportOut:
     """Queue an export. Returns 202; nothing is rendered here (C-4)."""
     if body.format not in MEDIA:
         raise HTTPException(
@@ -74,12 +68,7 @@ async def export_run(
         )
 
     async with SessionFactory() as session:
-        try:
-            tier = await check_export(session, account, body.format)
-        except QuotaExceeded as exc:
-            raise as_http(exc) from None
-
-        run = await owned_run(session, run_id, account)
+        run = await get_or_404(session, GenerationRunRow, run_id, "run")
         if run.status != "succeeded":
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
@@ -132,12 +121,9 @@ async def export_run(
         request = ExportRow(
             id=f"exp_{uuid.uuid4().hex[:16]}",
             run_id=run_id,
-            account_id=account,
-            tier=tier.id,
             format=body.format,
             template_id=body.templateId,
             fields=dict(body.fields),
-            watermarked=bool(tier.watermark and body.format == "pdf"),
             status="pending",
         )
         session.add(request)
@@ -150,7 +136,7 @@ async def export_run(
             "export_document",
             export_id,
             _job_id=f"export:{export_id}",
-            _queue_name=f"arq:{tier.queue}",
+            _queue_name=DEFAULT_QUEUE,
         )
     finally:
         await pool.aclose()
@@ -159,16 +145,14 @@ async def export_run(
         exportId=export_id,
         status="pending",
         format=body.format,
-        watermarked=bool(tier.watermark and body.format == "pdf"),
-        tier=tier.id,
     )
 
 
 @router.get("/{run_id}/artefacts")
-async def artefact_links(run_id: str, account: str = Depends(require_account)) -> dict[str, Any]:
+async def artefact_links(run_id: str) -> dict[str, Any]:
     """Signed, expiring links to this run's diagrams (NFR-S4)."""
     async with SessionFactory() as session:
-        await owned_run(session, run_id, account)
+        await get_or_404(session, GenerationRunRow, run_id, "run")
         rows = list(
             await session.scalars(
                 select(GenerationArtefactRow).where(GenerationArtefactRow.run_id == run_id)
@@ -209,14 +193,10 @@ templates_router = APIRouter(tags=["exports"])
 
 
 @templates_router.get("/templates", response_model=list[TemplateOut])
-async def list_templates(account: str = Depends(require_account)) -> list[TemplateOut]:
-    """Every template this account's tier may export with, fields and all
-    (FR-15). The chat surface reads labels, placeholders and required-ness
-    from here — it is not allowed to know what a template needs any other
-    way."""
-    async with SessionFactory() as session:
-        tier = await account_tier(session, account)
-
+async def list_templates() -> list[TemplateOut]:
+    """Every template available, fields and all (FR-15). The chat surface
+    reads labels, placeholders and required-ness from here — it is not
+    allowed to know what a template needs any other way."""
     return [
         TemplateOut(
             id=template.id,
@@ -235,7 +215,6 @@ async def list_templates(account: str = Depends(require_account)) -> list[Templa
             ],
         )
         for template in sorted(available_templates().values(), key=lambda t: t.id)
-        if tier.allows_template(template.id)
     ]
 
 
@@ -243,7 +222,7 @@ artefact_router = APIRouter(tags=["exports"])
 
 
 @artefact_router.get("/exports/{export_id}", response_model=ExportOut)
-async def export_status(export_id: str, account: str = Depends(require_account)) -> ExportOut:
+async def export_status(export_id: str) -> ExportOut:
     """Where the export got to, and a signed link once it is finished.
 
     Unprefixed, like its sibling download route below: an export has its own
@@ -252,7 +231,7 @@ async def export_status(export_id: str, account: str = Depends(require_account))
     """
     async with SessionFactory() as session:
         request = await session.get(ExportRow, export_id)
-        if request is None or request.account_id != account:
+        if request is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"no export {export_id!r}")
 
         finished = request.status == "succeeded"
@@ -263,24 +242,19 @@ async def export_status(export_id: str, account: str = Depends(require_account))
             bytes=len(request.content or b"") or None,
             error=request.error,
             url=(f"/exports/{export_id}/download?token={sign(export_id)}" if finished else None),
-            watermarked=request.watermarked,
-            tier=request.tier,
         )
 
         if finished:
             await events.record(
                 session,
                 events.EXPORT_COMPLETED,
-                account_id=account,
                 run_id=request.run_id,
-                tier=request.tier,
                 payload={
                     "format": request.format,
                     "templateId": request.template_id,
                     "bytes": len(request.content or b""),
                     "figures": request.figures,
                     "tables": request.tables,
-                    "watermarked": request.watermarked,
                 },
             )
             await session.commit()
@@ -309,9 +283,9 @@ async def download_export(export_id: str, token: str) -> Response:
 async def download_artefact(artefact_id: str, token: str) -> Response:
     """Serve one diagram to a signed link, and to nothing else.
 
-    Deliberately not behind the account header as well: the signature *is* the
-    authorisation, which is what lets a link be embedded or opened in a new
-    tab. It is scoped to one artefact and it expires.
+    The signature *is* the authorisation, which is what lets a link be
+    embedded or opened in a new tab. It is scoped to one artefact and it
+    expires.
     """
     verify(artefact_id, token)
 

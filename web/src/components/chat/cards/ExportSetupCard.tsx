@@ -19,8 +19,8 @@ export type ExportSetupCardProps = {
 
 /**
  * Template choice plus that template's own required fields (FR-15), in one
- * card. The choice is skipped entirely when the tier allows only one
- * template — there is nothing to decide, so nothing is asked. Every label,
+ * card. The choice is skipped entirely when there is only one template
+ * available — there is nothing to decide, so nothing is asked. Every label,
  * placeholder and help string here is read straight off the template's own
  * declared fields (`GET /templates`); this component writes none of its own
  * (the Watch For, verbatim). Submit stays disabled until every required
@@ -57,7 +57,7 @@ export function ExportSetupCard({
     return (
       <Card className="max-w-md">
         <CardContent className="pt-6 text-sm text-muted-foreground">
-          No template is available for your tier.
+          No template is available.
         </CardContent>
       </Card>
     );

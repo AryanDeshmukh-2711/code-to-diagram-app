@@ -1,6 +1,5 @@
 import type { NarrationSource } from "@/components/chat/StreamingText";
 import type { ExportResult, TemplateSummary } from "@/lib/exports";
-import type { QuotaRefusal } from "@/lib/quota";
 import type { Review } from "@/lib/review";
 import type { Run } from "@/lib/runs";
 
@@ -21,9 +20,7 @@ export type ChatMessage =
   | DiagramProgressMessage
   | ExportSetupMessage
   | NeedsPngMessage
-  | ExportReadyMessage
-  | QuotaRefusalMessage
-  | SessionExpiredMessage;
+  | ExportReadyMessage;
 
 type BaseMessage = {
   id: string;
@@ -83,8 +80,8 @@ export type DiagramProgressMessage = BaseMessage & {
 
 /** Format is already known by the time this renders — collected
  * conversationally before the card ever appears. What is left to collect is
- * the template (skipped as a choice when the tier allows only one) and that
- * template's own required fields (FR-15). Submit never fires
+ * the template (skipped as a choice when there is only one available) and
+ * that template's own required fields (FR-15). Submit never fires
  * `POST .../export` until every one of them is filled — see
  * ExportSetupCard's own docstring. */
 export type ExportSetupMessage = BaseMessage & {
@@ -113,26 +110,4 @@ export type ExportReadyMessage = BaseMessage & {
   role: "assistant";
   kind: "export-ready";
   export: ExportResult;
-};
-
-/** A 402. `refusal` is `billing/quota.py`'s own `QuotaRefusal` — no rule ID
- * attaches to this step, but see lib/quota.ts's docstring for the principle
- * that does. `cpmVersionId` is set only when the refusal came from starting a
- * run — it is what lets a `diagram_format` refusal offer a one-click retry in
- * the format the tier actually allows (`refusal.limit`), instead of leaving
- * the user to guess a chat phrase that was never wired to anything. */
-export type QuotaRefusalMessage = BaseMessage & {
-  role: "assistant";
-  kind: "quota-refusal";
-  refusal: QuotaRefusal;
-  cpmVersionId?: string;
-};
-
-/** A 401. Never text glued into a narration bubble — see
- * SessionExpiredCard's own docstring for why the transcript above this stays
- * intact rather than the app silently navigating away. */
-export type SessionExpiredMessage = BaseMessage & {
-  role: "assistant";
-  kind: "session-expired";
-  returnTo: string;
 };

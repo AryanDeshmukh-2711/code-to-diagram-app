@@ -25,7 +25,6 @@ function run(overrides: Partial<Run> = {}): Run {
     projectId: "proj_1",
     cpmVersionId: "cpmv_1",
     status: "succeeded",
-    tier: "free",
     kind: "full",
     parentRunId: null,
     requestedTypes: ["class"],
