@@ -22,14 +22,14 @@ from typing import Any
 from arq import create_pool
 from arq.connections import RedisSettings
 from extraction.pdf_text import PdfRejected, probe_pdf
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from store.models import ExtractionRow
 from store.session import SessionFactory
 
 from app.core.config import get_settings
-from app.core.identity import owned_extraction, require_account
+from app.core.identity import get_or_404
 from app.core.projects import ensure_project
 
 router = APIRouter(prefix="/projects/{project_id}", tags=["extraction"])
@@ -78,7 +78,6 @@ async def start_extraction(
     file: UploadFile | None = File(default=None),  # noqa: B008 -- FastAPI's DI marker, not a mutable default
     projectName: str = Form(default=""),
     previousExtractionId: str | None = Form(default=None),
-    account: str = Depends(require_account),
 ) -> ExtractionOut:
     """Queue an extraction from pasted text or an uploaded PDF. 202; nothing
     is rendered or sent to a model here (C-4).
@@ -99,7 +98,7 @@ async def start_extraction(
                 detail="continuing an extraction needs the additional detail as text",
             )
         async with SessionFactory() as session:
-            previous = await owned_extraction(session, previousExtractionId, account)
+            previous = await get_or_404(session, ExtractionRow, previousExtractionId, "extraction")
         if previous.project_id != project_id:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
@@ -135,14 +134,11 @@ async def start_extraction(
         combined_text = text
 
     async with SessionFactory() as session:
-        # A project created by dropping a PDF counts against the free tier
-        # exactly as one created by seeding a draft does (FR-22).
-        await ensure_project(session, project_id, account, projectName or project_id)
+        await ensure_project(session, project_id, projectName or project_id)
 
         row = ExtractionRow(
             id=f"ext_{uuid.uuid4().hex[:16]}",
             project_id=project_id,
-            account_id=account,
             input_kind="pdf" if pdf_bytes is not None else "text",
             project_name=projectName.strip() or None,
             source_text=combined_text,
@@ -155,9 +151,6 @@ async def start_extraction(
 
     pool = await create_pool(RedisSettings.from_dsn(get_settings().redis_url))
     try:
-        # No tier concept for extraction: it always runs on the default pool,
-        # same as regenerate_diagram. Leaving _queue_name unset lands the job
-        # on arq's own default queue, which no worker here consumes.
         await pool.enqueue_job(
             "extract_cpm",
             extraction_id,
@@ -171,21 +164,17 @@ async def start_extraction(
 
 
 @router.get("/extractions/{extraction_id}", response_model=ExtractionOut)
-async def get_extraction(
-    project_id: str, extraction_id: str, account: str = Depends(require_account)
-) -> ExtractionOut:
+async def get_extraction(project_id: str, extraction_id: str) -> ExtractionOut:
     async with SessionFactory() as session:
-        row = await owned_extraction(session, extraction_id, account)
+        row = await get_or_404(session, ExtractionRow, extraction_id, "extraction")
         return _snapshot(row)
 
 
 @router.get("/extractions/{extraction_id}/events")
-async def stream_extraction(
-    project_id: str, extraction_id: str, account: str = Depends(require_account)
-) -> StreamingResponse:
+async def stream_extraction(project_id: str, extraction_id: str) -> StreamingResponse:
     """Server-sent progress, the same shape run progress already streams."""
     async with SessionFactory() as session:
-        await owned_extraction(session, extraction_id, account)
+        await get_or_404(session, ExtractionRow, extraction_id, "extraction")
 
     async def events_stream():
         previous: str | None = None

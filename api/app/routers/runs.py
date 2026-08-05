@@ -16,7 +16,7 @@ from arq import create_pool
 from arq.connections import RedisSettings
 from diagrams.registry import registered_types
 from diagrams.types import RenderFormat
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, HTTPException, Response, status
 from fastapi.responses import StreamingResponse
 from generation.orchestrator import RunNotFound
 from generation.regenerate import (
@@ -31,12 +31,13 @@ from store.models import (
     CPMVersionRow,
     GenerationArtefactRow,
     GenerationRunRow,
+    ProjectRow,
     RunStatus,
 )
 from store.session import SessionFactory
 
 from app.core.config import get_settings
-from app.core.identity import owned_project, owned_run, require_account
+from app.core.identity import get_or_404
 
 router = APIRouter(prefix="/runs", tags=["generation"])
 DEFAULT_QUEUE = "arq:default"
@@ -150,7 +151,7 @@ async def _snapshot(session, run: GenerationRunRow) -> RunOut:
 
 
 @router.post("", response_model=RunOut, status_code=status.HTTP_202_ACCEPTED)
-async def start_run(body: StartRunIn, account: str = Depends(require_account)) -> RunOut:
+async def start_run(body: StartRunIn) -> RunOut:
     """Queue a run. Returns 202 immediately — nothing is rendered here."""
     wanted = body.diagramTypes or registered_types()
     unknown = sorted(set(wanted) - set(registered_types()))
@@ -167,10 +168,7 @@ async def start_run(body: StartRunIn, account: str = Depends(require_account)) -
         ) from None
 
     async with SessionFactory() as session:
-        # You may only generate from your own project (NFR-S2).
-        project = await owned_project(session, body.projectId, account)
-        if project is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"no project {body.projectId!r}")
+        await get_or_404(session, ProjectRow, body.projectId, "project")
 
         version = await session.get(CPMVersionRow, body.cpmVersionId)
         if version is None:
@@ -186,7 +184,6 @@ async def start_run(body: StartRunIn, account: str = Depends(require_account)) -
             project_id=body.projectId,
             cpm_version_id=body.cpmVersionId,
             template_id=body.templateId,
-            account_id=account,
             requested_types=sorted(wanted),
             fmt=fmt.value,
             status=RunStatus.PENDING,
@@ -196,7 +193,6 @@ async def start_run(body: StartRunIn, account: str = Depends(require_account)) -
         await events.record(
             session,
             events.RUN_STARTED,
-            account_id=account,
             project_id=body.projectId,
             run_id=run.id,
             payload={
@@ -224,19 +220,14 @@ async def start_run(body: StartRunIn, account: str = Depends(require_account)) -
 
 
 @router.get("/{run_id}", response_model=RunOut)
-async def get_run(run_id: str, account: str = Depends(require_account)) -> RunOut:
+async def get_run(run_id: str) -> RunOut:
     async with SessionFactory() as session:
-        run = await owned_run(session, run_id, account)
+        run = await get_or_404(session, GenerationRunRow, run_id, "run")
         return await _snapshot(session, run)
 
 
 @router.post("/{run_id}/regenerate", response_model=RegenerateOut)
-async def regenerate(
-    run_id: str,
-    body: RegenerateIn,
-    response: Response,
-    account: str = Depends(require_account),
-) -> RegenerateOut:
+async def regenerate(run_id: str, body: RegenerateIn, response: Response) -> RegenerateOut:
     """FR-12: redraw one diagram from an already-confirmed model.
 
     Answers synchronously when there is nothing to do, and only then. Deciding
@@ -246,7 +237,7 @@ async def regenerate(
     still runs in the worker (C-4).
     """
     async with SessionFactory() as session:
-        await owned_run(session, run_id, account)
+        await get_or_404(session, GenerationRunRow, run_id, "run")
 
     try:
         plan = await plan_regeneration(run_id, body.diagramType, body.cpmVersionId)
@@ -287,11 +278,9 @@ async def regenerate(
         await pool.aclose()
 
     async with SessionFactory() as session:
-        parent = await session.get(GenerationRunRow, run_id)
         await events.record(
             session,
             "regeneration_requested",
-            account_id=parent.account_id if parent else None,
             project_id=plan.project_id,
             run_id=child_id,
             payload={
@@ -309,10 +298,10 @@ async def regenerate(
 
 
 @router.get("/{run_id}/history", response_model=list[LineageEntry])
-async def history(run_id: str, account: str = Depends(require_account)) -> list[LineageEntry]:
+async def history(run_id: str) -> list[LineageEntry]:
     """What was regenerated, and when — oldest first."""
     async with SessionFactory() as session:
-        await owned_run(session, run_id, account)
+        await get_or_404(session, GenerationRunRow, run_id, "run")
     chain = await lineage(run_id)
     if not chain:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"no run {run_id!r}")
@@ -331,13 +320,13 @@ async def history(run_id: str, account: str = Depends(require_account)) -> list[
 
 
 @router.get("/{run_id}/events")
-async def stream_run(run_id: str, account: str = Depends(require_account)) -> StreamingResponse:
+async def stream_run(run_id: str) -> StreamingResponse:
     """Server-sent events, one per change of run state (SRS §4.3)."""
 
     async with SessionFactory() as session:
-        # Checked once, before the stream opens: an unowned run must not
-        # leak progress either.
-        await owned_run(session, run_id, account)
+        # Checked once, before the stream opens: a run that does not exist
+        # must not open a stream that then hangs forever.
+        await get_or_404(session, GenerationRunRow, run_id, "run")
 
     async def events():
         previous: str | None = None

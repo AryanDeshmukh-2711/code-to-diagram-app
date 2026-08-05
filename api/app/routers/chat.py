@@ -15,14 +15,14 @@ from typing import Any
 
 from arq import create_pool
 from arq.connections import RedisSettings
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from store.models import ChatEditRow, CPMDraftRow
+from store.models import ChatEditRow, CPMDraftRow, ProjectRow
 from store.session import SessionFactory
 
 from app.core.config import get_settings
-from app.core.identity import owned_chat_edit, owned_project, require_account
+from app.core.identity import get_or_404
 
 router = APIRouter(prefix="/projects/{project_id}/chat", tags=["chat"])
 
@@ -64,18 +64,14 @@ def _snapshot(row: ChatEditRow) -> ChatEditOut:
 
 
 @router.post("", response_model=ChatEditOut, status_code=status.HTTP_202_ACCEPTED)
-async def send_message(
-    project_id: str,
-    body: ChatMessageIn,
-    account: str = Depends(require_account),
-) -> ChatEditOut:
+async def send_message(project_id: str, body: ChatMessageIn) -> ChatEditOut:
     """Queue one chat message for parsing. 202; nothing is parsed or applied
     here (C-4)."""
     if not body.message.strip():
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="message cannot be empty")
 
     async with SessionFactory() as session:
-        await owned_project(session, project_id, account)
+        await get_or_404(session, ProjectRow, project_id, "project")
         draft = await session.get(CPMDraftRow, project_id)
         if draft is None:
             raise HTTPException(
@@ -86,7 +82,6 @@ async def send_message(
         row = ChatEditRow(
             id=f"chat_{uuid.uuid4().hex[:16]}",
             project_id=project_id,
-            account_id=account,
             message=body.message,
             status="pending",
         )
@@ -109,22 +104,18 @@ async def send_message(
 
 
 @router.get("/{edit_id}", response_model=ChatEditOut)
-async def get_chat_edit(
-    project_id: str, edit_id: str, account: str = Depends(require_account)
-) -> ChatEditOut:
+async def get_chat_edit(project_id: str, edit_id: str) -> ChatEditOut:
     async with SessionFactory() as session:
-        row = await owned_chat_edit(session, edit_id, account)
+        row = await get_or_404(session, ChatEditRow, edit_id, "chat edit")
         return _snapshot(row)
 
 
 @router.get("/{edit_id}/events")
-async def stream_chat_edit(
-    project_id: str, edit_id: str, account: str = Depends(require_account)
-) -> StreamingResponse:
+async def stream_chat_edit(project_id: str, edit_id: str) -> StreamingResponse:
     """Server-sent progress, the same shape extraction and run progress
     already stream."""
     async with SessionFactory() as session:
-        await owned_chat_edit(session, edit_id, account)
+        await get_or_404(session, ChatEditRow, edit_id, "chat edit")
 
     async def events_stream():
         previous: str | None = None

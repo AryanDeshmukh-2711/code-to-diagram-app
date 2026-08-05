@@ -29,19 +29,14 @@ from store.models import (
 )
 
 
-async def list_projects(session: AsyncSession, account_id: str) -> list[ProjectRow]:
-    """Every project this account owns, most recently created first."""
-    rows = await session.scalars(
-        select(ProjectRow)
-        .where(ProjectRow.account_id == account_id)
-        .order_by(ProjectRow.created_at.desc())
-    )
+async def list_projects(session: AsyncSession) -> list[ProjectRow]:
+    """Every project, most recently created first."""
+    rows = await session.scalars(select(ProjectRow).order_by(ProjectRow.created_at.desc()))
     return list(rows)
 
 
 async def delete_project(session: AsyncSession, project: ProjectRow) -> None:
-    """Delete `project` and everything it produced. The caller has already
-    proved ownership — this does not check it again."""
+    """Delete `project` and everything it produced."""
     run_ids = list(
         await session.scalars(
             select(GenerationRunRow.id).where(GenerationRunRow.project_id == project.id)

@@ -17,7 +17,7 @@ from typing import Any
 from analytics import events
 from arq import create_pool
 from arq.connections import RedisSettings
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import Response
 from generation.export import gather_figures
 from pydantic import BaseModel, Field
@@ -28,11 +28,11 @@ from srs.template.apply import (
     available_templates,
     check_fields,
 )
-from store.models import ExportRow, GenerationArtefactRow
+from store.models import ExportRow, GenerationArtefactRow, GenerationRunRow
 from store.session import SessionFactory
 
 from app.core.config import get_settings
-from app.core.identity import owned_run, require_account, sign, verify
+from app.core.identity import get_or_404, sign, verify
 
 router = APIRouter(prefix="/runs", tags=["exports"])
 DEFAULT_QUEUE = "arq:default"
@@ -59,9 +59,7 @@ class ExportOut(BaseModel):
 
 
 @router.post("/{run_id}/export", status_code=status.HTTP_202_ACCEPTED)
-async def export_run(
-    run_id: str, body: ExportIn, account: str = Depends(require_account)
-) -> ExportOut:
+async def export_run(run_id: str, body: ExportIn) -> ExportOut:
     """Queue an export. Returns 202; nothing is rendered here (C-4)."""
     if body.format not in MEDIA:
         raise HTTPException(
@@ -70,7 +68,7 @@ async def export_run(
         )
 
     async with SessionFactory() as session:
-        run = await owned_run(session, run_id, account)
+        run = await get_or_404(session, GenerationRunRow, run_id, "run")
         if run.status != "succeeded":
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
@@ -123,7 +121,6 @@ async def export_run(
         request = ExportRow(
             id=f"exp_{uuid.uuid4().hex[:16]}",
             run_id=run_id,
-            account_id=account,
             format=body.format,
             template_id=body.templateId,
             fields=dict(body.fields),
@@ -152,10 +149,10 @@ async def export_run(
 
 
 @router.get("/{run_id}/artefacts")
-async def artefact_links(run_id: str, account: str = Depends(require_account)) -> dict[str, Any]:
+async def artefact_links(run_id: str) -> dict[str, Any]:
     """Signed, expiring links to this run's diagrams (NFR-S4)."""
     async with SessionFactory() as session:
-        await owned_run(session, run_id, account)
+        await get_or_404(session, GenerationRunRow, run_id, "run")
         rows = list(
             await session.scalars(
                 select(GenerationArtefactRow).where(GenerationArtefactRow.run_id == run_id)
@@ -196,7 +193,7 @@ templates_router = APIRouter(tags=["exports"])
 
 
 @templates_router.get("/templates", response_model=list[TemplateOut])
-async def list_templates(account: str = Depends(require_account)) -> list[TemplateOut]:
+async def list_templates() -> list[TemplateOut]:
     """Every template available, fields and all (FR-15). The chat surface
     reads labels, placeholders and required-ness from here — it is not
     allowed to know what a template needs any other way."""
@@ -225,7 +222,7 @@ artefact_router = APIRouter(tags=["exports"])
 
 
 @artefact_router.get("/exports/{export_id}", response_model=ExportOut)
-async def export_status(export_id: str, account: str = Depends(require_account)) -> ExportOut:
+async def export_status(export_id: str) -> ExportOut:
     """Where the export got to, and a signed link once it is finished.
 
     Unprefixed, like its sibling download route below: an export has its own
@@ -234,7 +231,7 @@ async def export_status(export_id: str, account: str = Depends(require_account))
     """
     async with SessionFactory() as session:
         request = await session.get(ExportRow, export_id)
-        if request is None or request.account_id != account:
+        if request is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"no export {export_id!r}")
 
         finished = request.status == "succeeded"
@@ -251,7 +248,6 @@ async def export_status(export_id: str, account: str = Depends(require_account))
             await events.record(
                 session,
                 events.EXPORT_COMPLETED,
-                account_id=account,
                 run_id=request.run_id,
                 payload={
                     "format": request.format,
@@ -287,9 +283,9 @@ async def download_export(export_id: str, token: str) -> Response:
 async def download_artefact(artefact_id: str, token: str) -> Response:
     """Serve one diagram to a signed link, and to nothing else.
 
-    Deliberately not behind the account header as well: the signature *is* the
-    authorisation, which is what lets a link be embedded or opened in a new
-    tab. It is scoped to one artefact and it expires.
+    The signature *is* the authorisation, which is what lets a link be
+    embedded or opened in a new tab. It is scoped to one artefact and it
+    expires.
     """
     verify(artefact_id, token)
 

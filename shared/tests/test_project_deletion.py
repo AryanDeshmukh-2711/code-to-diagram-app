@@ -21,13 +21,11 @@ from store.models import (
 )
 from store.projects import delete_project, list_projects
 
-ACCOUNT = "acct_delete_test"
-
 
 async def _seed_full_project(session_factory, project_id: str) -> None:
     """One project with a row in every table that references it."""
     async with session_factory() as session:
-        session.add(ProjectRow(id=project_id, account_id=ACCOUNT, name="Doomed Project"))
+        session.add(ProjectRow(id=project_id, name="Doomed Project"))
         session.add(CPMDraftRow(project_id=project_id, project_name="Doomed Project", payload={}))
         session.add(
             CPMVersionRow(
@@ -42,7 +40,6 @@ async def _seed_full_project(session_factory, project_id: str) -> None:
             ExtractionRow(
                 id=f"{project_id}_ext",
                 project_id=project_id,
-                account_id=ACCOUNT,
                 input_kind="text",
                 source_text="doomed",
                 status="succeeded",
@@ -52,7 +49,6 @@ async def _seed_full_project(session_factory, project_id: str) -> None:
             ChatEditRow(
                 id=f"{project_id}_chat",
                 project_id=project_id,
-                account_id=ACCOUNT,
                 message="rename Doomed to Renamed",
                 status="succeeded",
             )
@@ -63,7 +59,6 @@ async def _seed_full_project(session_factory, project_id: str) -> None:
                 id=run_id,
                 project_id=project_id,
                 cpm_version_id=f"{project_id}_v1",
-                account_id=ACCOUNT,
                 requested_types=["class"],
                 fmt="svg",
                 status="succeeded",
@@ -84,7 +79,6 @@ async def _seed_full_project(session_factory, project_id: str) -> None:
             ExportRow(
                 id=f"{project_id}_exp",
                 run_id=run_id,
-                account_id=ACCOUNT,
                 format="pdf",
                 template_id="ieee-830-plain",
                 status="succeeded",
@@ -94,7 +88,6 @@ async def _seed_full_project(session_factory, project_id: str) -> None:
         session.add(
             EventRow(
                 id=f"{project_id}_evt",
-                account_id=ACCOUNT,
                 project_id=project_id,
                 name="project_created",
                 payload={},
@@ -154,26 +147,22 @@ async def test_deleting_a_project_never_touches_a_different_one(session_factory)
         assert await session.get(ExportRow, f"{survivor_id}_exp") is not None
 
 
-async def test_list_projects_returns_only_this_accounts_own_most_recent_first(
-    session_factory,
-) -> None:
+async def test_list_projects_orders_most_recent_first(session_factory) -> None:
     async with session_factory() as session:
-        session.add(ProjectRow(id="proj_mine_old", account_id=ACCOUNT, name="Older"))
-        session.add(ProjectRow(id="proj_mine_new", account_id=ACCOUNT, name="Newer"))
-        session.add(ProjectRow(id="proj_theirs", account_id="acct_someone_else", name="Not mine"))
+        session.add(ProjectRow(id="proj_older", name="Older"))
+        session.add(ProjectRow(id="proj_newer", name="Newer"))
         await session.commit()
         # created_at defaults to "now"; force a real ordering rather than
         # trusting two inserts in the same transaction to land microseconds
         # apart in whichever order the test happens to run.
-        mine_old = await session.get(ProjectRow, "proj_mine_old")
-        mine_old.created_at = datetime(2020, 1, 1, tzinfo=UTC)
-        mine_new = await session.get(ProjectRow, "proj_mine_new")
-        mine_new.created_at = datetime(2024, 1, 1, tzinfo=UTC)
+        older = await session.get(ProjectRow, "proj_older")
+        older.created_at = datetime(2020, 1, 1, tzinfo=UTC)
+        newer = await session.get(ProjectRow, "proj_newer")
+        newer.created_at = datetime(2024, 1, 1, tzinfo=UTC)
         await session.commit()
 
     async with session_factory() as session:
-        rows = await list_projects(session, ACCOUNT)
+        rows = await list_projects(session)
 
     ids = [row.id for row in rows]
-    assert ids == ["proj_mine_new", "proj_mine_old"]
-    assert "proj_theirs" not in ids
+    assert ids.index("proj_newer") < ids.index("proj_older")

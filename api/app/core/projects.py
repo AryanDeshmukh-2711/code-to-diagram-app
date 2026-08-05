@@ -7,10 +7,10 @@ rather than two that could quietly drift apart.
 """
 
 from analytics import events
-from store.models import AccountRow, ProjectRow
+from store.models import ProjectRow
 
 
-async def ensure_project(session, project_id: str, account_id: str, project_name: str) -> None:
+async def ensure_project(session, project_id: str, project_name: str) -> None:
     """If this project does not exist yet, create it.
 
     Does nothing if the project already exists: an established project is
@@ -20,13 +20,10 @@ async def ensure_project(session, project_id: str, account_id: str, project_name
     if existing is not None:
         return
 
-    if await session.get(AccountRow, account_id) is None:
-        session.add(AccountRow(id=account_id))
-    session.add(ProjectRow(id=project_id, account_id=account_id, name=project_name))
+    session.add(ProjectRow(id=project_id, name=project_name))
     await events.record(
         session,
         events.PROJECT_CREATED,
-        account_id=account_id,
         project_id=project_id,
         payload={"projectName": project_name},
     )
