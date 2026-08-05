@@ -278,8 +278,6 @@ Figure numbers, section numbers and the index table shall be generated automatic
 *Priority:* P0 — PNG and SVG per diagram.
 **FR-19 — Source export**
 *Priority:* P1 — PlantUML and Mermaid source per diagram.
-**FR-20 — Watermarking**
-*Priority:* P0 — free-tier exports shall carry a visible watermark; paid-tier exports shall not.
 
 ### 5.6 Account, Quota and Project Management
 
@@ -399,7 +397,6 @@ CPM
 | NFR-M1 | Swapping LLM provider shall require changes only within the LLM Gateway |
 | NFR-M2 | Adding a diagram type shall require only a new CPM→source mapper, with no change to ingestion, extraction or document assembly |
 | NFR-M3 | Per-run LLM cost shall be recorded and attributable to a user |
-| NFR-M4 | Median per-run inference cost shall remain below 15% of the lowest paid tier's per-run revenue at expected usage |
 
 ---
 
@@ -493,7 +490,7 @@ This table is a binding design decision arising from constraint C-1 and risk R7.
 | F-03, F-04 | FR-4, FR-5, FR-6, FR-7 |
 | F-05, F-06 | FR-8, FR-9, FR-10, FR-11 |
 | F-07 | FR-13, FR-16 |
-| F-08, F-09, F-10 | FR-17, FR-18, FR-19, FR-20 |
+| F-08, F-09, F-10 | FR-17, FR-18, FR-19 |
 | F-11, F-12 | FR-14, FR-15 |
 | F-13 | FR-12 |
 | F-14 | FR-23, FR-24 |
