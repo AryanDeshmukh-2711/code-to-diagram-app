@@ -705,6 +705,25 @@ export function ChatSession({ projectId }: { projectId: string }) {
         return;
       }
 
+      if (snapshot.status === "failed") {
+        // A model/schema hiccup, not a content problem (that's the
+        // "insufficient" branch above) -- the gateway already gave it one
+        // corrective retry internally and stopped (llm/gateway.py's
+        // MAX_ATTEMPTS is deliberately fixed, not something to loop around
+        // here). The same conversational retry still applies: whatever was
+        // typed next is combined with the same source text and tried again
+        // as a fresh attempt, with its own fresh two internal tries, rather
+        // than this being a dead end.
+        setPendingExtractionRetry({ extractionId: snapshot.extractionId });
+        updateNarration(
+          narrationId,
+          `${extractionOutcomeNarration(snapshot)}\n\nThat was the model's own output, not ` +
+            `something wrong with what you gave it. Reply here with anything (even just ` +
+            `"try again") and I'll run it again with the same description.`,
+        );
+        return;
+      }
+
       updateNarration(narrationId, extractionOutcomeNarration(snapshot));
       if (snapshot.status === "succeeded" && snapshot.outcome === "extracted") {
         setPendingExtractionRetry(null);
