@@ -39,12 +39,6 @@ export function ExportReadyCard({ export: result }: ExportReadyCardProps) {
         ) : (
           <p>Assembling the document — this only takes a moment.</p>
         )}
-        {result.watermarked ? (
-          <p>
-            This document carries a watermark
-            {result.tier ? ` on the ${result.tier} tier` : ""}.
-          </p>
-        ) : null}
       </CardContent>
       {result.status === "succeeded" && result.url ? (
         <CardFooter>

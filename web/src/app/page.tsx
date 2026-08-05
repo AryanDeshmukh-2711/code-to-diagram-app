@@ -13,11 +13,11 @@ import { Card, CardContent } from "@/components/ui/card";
 /**
  * The home screen: start something new, or come back to what already
  * exists. FR-23's list/open/delete — "your projects" is not shown as a
- * courtesy, it is how someone who has hit their tier's project limit finds
- * out what there is to delete, since nothing else in the product surfaces
- * that. Deleting itself needs a second, explicit click (SRS UI-5) rather
- * than acting on the first one — a destructive action that fires from a
- * single click is exactly what that requirement exists to prevent.
+ * courtesy, it is how someone finds out what there is to delete, since
+ * nothing else in the product surfaces that. Deleting itself needs a
+ * second, explicit click (SRS UI-5) rather than acting on the first one —
+ * a destructive action that fires from a single click is exactly what that
+ * requirement exists to prevent.
  */
 export default function Home() {
   const router = useRouter();

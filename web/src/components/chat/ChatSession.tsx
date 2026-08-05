@@ -29,7 +29,6 @@ import { looksLikeGenerateRequest } from "@/lib/generateIntent";
 import { historyNarration } from "@/lib/historyNarration";
 import { looksLikeHistoryRequest } from "@/lib/historyIntent";
 import { extractionOutcomeNarration, extractionProgressNarration } from "@/lib/narration";
-import { quotaRefusal } from "@/lib/quota";
 import { confirmReview, loadReview, type Review, ReviewRefused } from "@/lib/review";
 import { regeneratePlanNarration } from "@/lib/regenerateNarration";
 import { looksLikeRegenerateRequest } from "@/lib/regenerateIntent";
@@ -72,7 +71,7 @@ type PendingClarification = {
 /**
  * Wires the composer to real extraction (P-M6-1), real chat edit-intent
  * parsing (P-M6-2), the confirm gate (P-M6-7), diagram generation (P-M6-8),
- * regeneration + lineage (P-M6-9), export (P-M6-10), and quota/billing/auth
+ * regeneration + lineage (P-M6-9), export (P-M6-10), and session/auth
  * messaging (P-M6-11).
  *
  * Everything narrated here comes straight off the row the backend returns
@@ -128,15 +127,12 @@ type PendingClarification = {
  * attempt; a retry is a new attempt; nothing here re-runs extraction twice on
  * the same text or invents entities the description does not support.
  *
- * Quota, billing and auth messages (P-M6-11) are canonical API output, not
+ * A session-expired message (P-M6-11) is canonical API output, not
  * narration: `reportApiError` is the one place every catch block in this
- * component funnels through, and it never lets a 402 or a 401 reach the
- * generic "assistant said something went wrong" bubble every other error
- * does. A 402 becomes a QuotaRefusalCard carrying `code`, `message`, `tier`,
- * `limit`, `used`, `upgradeTo` and `upgradeGives` exactly as
- * `billing/quota.py` wrote them (lib/quota.ts). A 401 becomes a
- * SessionExpiredCard rather than the dead conversation a silent
- * `window.location.href` redirect would leave behind: this component
+ * component funnels through, and it never lets a 401 reach the generic
+ * "assistant said something went wrong" bubble every other error does. A
+ * 401 becomes a SessionExpiredCard rather than the dead conversation a
+ * silent `window.location.href` redirect would leave behind: this component
  * overrides `client.ts`'s default unauthorized handler for as long as it is
  * mounted specifically so that redirect never fires out from under an
  * in-progress action, and restores the default on unmount.
@@ -203,41 +199,24 @@ export function ChatSession({ projectId }: { projectId: string }) {
 
   /** Every catch block in this component funnels through here (P-M6-11).
    * `narrationId`, when given, names the in-flight "…ing" bubble this action
-   * already posted — a 402 or 401 turns it into a short, generic pointer,
-   * never the canonical message itself, which appears in full in the card
-   * appended right after. Routing a quota refusal or a session expiry
-   * through the same "assistant said something went wrong" text every other
-   * error uses is exactly the Watch For this step names: that shortcut is
-   * what already reintroduced copy drift once. */
-  function reportApiError(
-    narrationId: string | null,
-    error: unknown,
-    fallback: string,
-    cpmVersionId?: string,
-  ) {
-    const refusal = quotaRefusal(error);
+   * already posted — a 401 turns it into a short, generic pointer, never the
+   * canonical message itself, which appears in full in the card appended
+   * right after. Routing a session expiry through the same "assistant said
+   * something went wrong" text every other error uses is exactly the Watch
+   * For this step names: that shortcut is what already reintroduced copy
+   * drift once. */
+  function reportApiError(narrationId: string | null, error: unknown, fallback: string) {
     const expired = error instanceof ApiError && error.status === 401;
 
-    if (refusal || expired) {
+    if (expired) {
       if (narrationId) updateNarration(narrationId, "That didn't go through — see below.");
-      append(
-        refusal
-          ? {
-              id: newId(),
-              role: "assistant",
-              kind: "quota-refusal",
-              refusal,
-              cpmVersionId,
-              at: new Date().toISOString(),
-            }
-          : {
-              id: newId(),
-              role: "assistant",
-              kind: "session-expired",
-              returnTo: `/projects/${projectId}/chat`,
-              at: new Date().toISOString(),
-            },
-      );
+      append({
+        id: newId(),
+        role: "assistant",
+        kind: "session-expired",
+        returnTo: `/projects/${projectId}/chat`,
+        at: new Date().toISOString(),
+      });
       return;
     }
 
@@ -310,7 +289,7 @@ export function ChatSession({ projectId }: { projectId: string }) {
     try {
       run = await startRun(format ? { projectId, cpmVersionId, format } : { projectId, cpmVersionId });
     } catch (error) {
-      reportApiError(narrationId, error, "Something went wrong starting that.", cpmVersionId);
+      reportApiError(narrationId, error, "Something went wrong starting that.");
       setBusy(false);
       return;
     }
@@ -399,8 +378,8 @@ export function ChatSession({ projectId }: { projectId: string }) {
 
   /** "Export this as a PDF" -> collects the template and its own required
    * fields via one ExportSetupCard. GET /templates is the only thing this
-   * calls before that card exists — never a guess at what a tier or
-   * template allows. */
+   * calls before that card exists — never a guess at what a template
+   * allows. */
   async function beginExport(format: "pdf" | "docx") {
     if (!latestRunId || !latestConfirmedVersion) {
       append({
@@ -832,7 +811,6 @@ export function ChatSession({ projectId }: { projectId: string }) {
           onExportSubmit={onExportSubmit}
           exportSubmittingId={exportSubmittingId}
           onRenderPng={(cpmVersionId) => void runDiagramGeneration(cpmVersionId, "png")}
-          onRetryFormat={(cpmVersionId, format) => void runDiagramGeneration(cpmVersionId, format)}
           busy={busy}
         />
       </div>
