@@ -9,7 +9,6 @@ import { ExportReadyCard } from "@/components/chat/cards/ExportReadyCard";
 import { ExportSetupCard } from "@/components/chat/cards/ExportSetupCard";
 import { NeedsPngCard } from "@/components/chat/cards/NeedsPngCard";
 import { ReviewSummaryCard } from "@/components/chat/cards/ReviewSummaryCard";
-import { SessionExpiredCard } from "@/components/chat/cards/SessionExpiredCard";
 import { StreamingText } from "@/components/chat/StreamingText";
 import type { Review } from "@/lib/review";
 
@@ -155,8 +154,5 @@ function MessageContent({
 
     case "export-ready":
       return <ExportReadyCard export={message.export} />;
-
-    case "session-expired":
-      return <SessionExpiredCard returnTo={message.returnTo} />;
   }
 }

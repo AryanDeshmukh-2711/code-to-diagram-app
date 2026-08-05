@@ -2,11 +2,9 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 
 import { ApiError } from "@/lib/client";
 import { deleteProject, listProjects, type Project } from "@/lib/projects";
-import { isAuthed } from "@/lib/session";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -20,23 +18,12 @@ import { Card, CardContent } from "@/components/ui/card";
  * requirement exists to prevent.
  */
 export default function Home() {
-  const router = useRouter();
-  const [checked, setChecked] = useState(false);
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!isAuthed()) {
-      router.replace("/signin");
-      return;
-    }
-    setChecked(true);
-  }, [router]);
-
-  useEffect(() => {
-    if (!checked) return;
     listProjects()
       .then(setProjects)
       .catch((error) =>
@@ -44,9 +31,7 @@ export default function Home() {
           error instanceof ApiError ? error.message : "Something went wrong loading your projects.",
         ),
       );
-  }, [checked]);
-
-  if (!checked) return null;
+  }, []);
 
   const newProjectId = `proj_${Math.random().toString(36).slice(2, 10)}`;
 

@@ -20,8 +20,7 @@ export type ChatMessage =
   | DiagramProgressMessage
   | ExportSetupMessage
   | NeedsPngMessage
-  | ExportReadyMessage
-  | SessionExpiredMessage;
+  | ExportReadyMessage;
 
 type BaseMessage = {
   id: string;
@@ -111,13 +110,4 @@ export type ExportReadyMessage = BaseMessage & {
   role: "assistant";
   kind: "export-ready";
   export: ExportResult;
-};
-
-/** A 401. Never text glued into a narration bubble — see
- * SessionExpiredCard's own docstring for why the transcript above this stays
- * intact rather than the app silently navigating away. */
-export type SessionExpiredMessage = BaseMessage & {
-  role: "assistant";
-  kind: "session-expired";
-  returnTo: string;
 };
