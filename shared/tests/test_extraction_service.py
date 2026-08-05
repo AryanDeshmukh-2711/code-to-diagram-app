@@ -108,6 +108,35 @@ async def test_a_long_input_with_two_entities_still_fails_the_floor() -> None:
     )
 
 
+async def test_relationship_guidance_names_the_entities_actually_found() -> None:
+    # A fixed "a member borrows loans" example means nothing to someone whose
+    # description was never about a library. Once two or more entities exist,
+    # the guidance has to ask about them by name — the same entities the
+    # reason line above it already reported finding.
+    payload = copy.deepcopy(VAGUE.llm_output)
+    payload["entities"] = [
+        {"id": "project", "name": "Project"},
+        {"id": "diagram", "name": "Diagram"},
+        {"id": "document", "name": "Document"},
+    ]
+    payload["relationships"] = []
+    result = await run("vague_startup", payload=payload)
+    assert isinstance(result, InsufficientInput)
+    relationship_line = next(line for line in result.guidance if "connect" in line)
+    assert "Project" in relationship_line
+    assert "Diagram" in relationship_line
+    assert "member" not in relationship_line.lower()
+    assert "loan" not in relationship_line.lower()
+
+
+async def test_relationship_guidance_falls_back_with_fewer_than_two_entities() -> None:
+    # Nothing to name yet -- the generic example is still the honest answer.
+    result = await run("vague_startup")
+    assert isinstance(result, InsufficientInput)
+    joined = " ".join(result.guidance).lower()
+    assert "member" in joined and "loan" in joined
+
+
 async def test_an_empty_model_is_insufficient_regardless_of_length() -> None:
     payload = {k: [] for k in VAGUE.llm_output}
     result = await run("parking_lot", payload=payload)

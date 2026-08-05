@@ -86,7 +86,7 @@ def _check_floor(collections: CPMCollections, word_count: int) -> InsufficientIn
             word_count=word_count,
             entities_found=0,
             relationships_found=relationships,
-            guidance=_guidance(entities, relationships),
+            guidance=_guidance(collections),
         )
 
     if word_count >= FLOOR_WORD_COUNT and (
@@ -102,27 +102,44 @@ def _check_floor(collections: CPMCollections, word_count: int) -> InsufficientIn
             word_count=word_count,
             entities_found=entities,
             relationships_found=relationships,
-            guidance=_guidance(entities, relationships),
+            guidance=_guidance(collections),
         )
 
     return None
 
 
-def _guidance(entities: int, relationships: int) -> list[str]:
-    """Concrete additions, named. "Add more detail" helps nobody."""
+def _guidance(collections: CPMCollections) -> list[str]:
+    """Concrete additions, named. "Add more detail" helps nobody — and
+    neither does a fixed library example when the description was never
+    about a library. Someone whose idea does not already come pre-shaped as
+    "entities and relationships" should not have to guess how to translate
+    generic advice into their own words: where the description already named
+    things, the guidance below asks about those things, by name, instead."""
+    entities = collections.entities
+    names = [entity.name for entity in entities]
+
     suggestions: list[str] = []
 
-    if entities < MIN_ENTITIES:
+    if len(entities) < MIN_ENTITIES:
         suggestions.append(
             "Name the things the system stores or tracks, and what each one holds — "
             "for example: 'A book has an ISBN, a title and an author. A member has a "
             "membership number and a name.'"
         )
-    if relationships < MIN_RELATIONSHIPS:
-        suggestions.append(
-            "Say how those things relate to each other — for example: 'A member "
-            "borrows many loans, and each loan is for one book.'"
-        )
+    if len(collections.relationships) < MIN_RELATIONSHIPS:
+        if len(names) >= 2:
+            suggestions.append(
+                f"You named {_list(names)} — say how they connect. Pick two and "
+                f"describe it in one sentence, the way you'd explain it to a person: "
+                f"'A {names[0]} belongs to one {names[1]}', or 'A {names[0]} has many "
+                f"{names[1]}.' Do that for every pair that actually relates — it does "
+                f"not need to be every possible pair."
+            )
+        else:
+            suggestions.append(
+                "Say how those things relate to each other — for example: 'A member "
+                "borrows many loans, and each loan is for one book.'"
+            )
     suggestions.append(
         "Describe who uses the system and what each of them does — for example: "
         "'A librarian issues and accepts returns; an administrator manages members.'"
@@ -132,3 +149,11 @@ def _guidance(entities: int, relationships: int) -> list[str]:
         "system does at each step."
     )
     return suggestions
+
+
+def _list(names: list[str], limit: int = 5) -> str:
+    shown = names[:limit]
+    rendered = shown[0] if len(shown) == 1 else f"{', '.join(shown[:-1])} and {shown[-1]}"
+    if len(names) > limit:
+        rendered += f", and {len(names) - limit} more"
+    return rendered
