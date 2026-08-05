@@ -133,25 +133,6 @@ async def _model_reachable() -> bool:
         return False
 
 
-async def _entitled_session(client: httpx.AsyncClient) -> tuple[str, dict[str, str]]:
-    """Register, sign in, and return the account id with its auth header.
-
-    Through the real endpoints: AT-1 exercises the product a user would meet,
-    and an account inserted straight into the database would skip the one thing
-    standing between a stranger and somebody's coursework.
-    """
-    registered = await client.post(f"{BASE}/auth/register", json={})
-    registered.raise_for_status()
-    account = registered.json()
-
-    session = await client.post(
-        f"{BASE}/auth/token",
-        json={"accountId": account["accountId"], "apiKey": account["apiKey"]},
-    )
-    session.raise_for_status()
-    return account["accountId"], {"Authorization": f"Bearer {session.json()['token']}"}
-
-
 async def _confirm_over_http(
     client: httpx.AsyncClient, project_id: str, cpm, auth: dict[str, str]
 ) -> str:
@@ -269,9 +250,8 @@ async def run_at1() -> Report:
     missing = [t for t in V1_DIAGRAMS if t not in set(registered_types())]
 
     project_id = f"at1_{int(time.time())}"
+    auth: dict[str, str] = {}
     async with httpx.AsyncClient(timeout=BUDGET_SECONDS) as client:
-        account, auth = await _entitled_session(client)
-        report.notes.append(f"account     {account}, signed in")
         version_id = await _confirm_over_http(client, project_id, cpm, auth)
         svg_run = await _run(client, project_id, version_id, available, "svg", auth)
         png_run = await _run(client, project_id, version_id, available, "png", auth)

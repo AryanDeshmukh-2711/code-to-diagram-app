@@ -110,23 +110,16 @@ make at1
 
 ## Using the API
 
+No sign-in step — a single-user local tool has no one to authenticate a
+caller against.
+
 ```bash
-# 1. Register — the key is shown once and never again
-curl -sX POST localhost:8000/auth/register -H 'content-type: application/json' \
-  -d '{"tier":"pro"}'
-
-# 2. Trade the key for a 12-hour session
-curl -sX POST localhost:8000/auth/token -H 'content-type: application/json' \
-  -d '{"accountId":"acct_...","apiKey":"..."}'
-
-# 3. Everything else carries the bearer token
 curl -sX POST localhost:8000/projects/my-project/review/seed \
-  -H 'authorization: Bearer ...' -H 'content-type: application/json' -d '{}'
+  -H 'content-type: application/json' -d '{}'
 ```
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /auth/register` · `POST /auth/token` | Account creation, session |
 | `POST /projects/{id}/review/seed` | Put a model into review |
 | `GET  /projects/{id}/review` | Current draft, validation issues, confirmable |
 | `POST /projects/{id}/review/edit` | One structural edit (renames cascade) |
@@ -145,7 +138,7 @@ curl -sX POST localhost:8000/projects/my-project/review/seed \
 ## Architecture
 
 ```
-├── api/          FastAPI — HTTP surface, auth, alembic migrations
+├── api/          FastAPI — HTTP surface, alembic migrations
 ├── worker/       arq workers — every generation stage runs here, never in a request
 ├── web/          Next.js + TypeScript + Tailwind + shadcn/ui
 ├── shared/       everything both api and worker need — one definition, imported twice
@@ -193,7 +186,6 @@ several have a planted-regression check proving the test is not vacuous.
 | **FR-11** | Diagram source validated before it is shown | Engine round-trip, one retry, failure contained to one figure |
 | **FR-12** | Regenerate one diagram, not the set | Child run carries the rest forward; an unchanged model is *reported*, not silently redrawn |
 | **FR-16** | Every diagram embedded, numbered, captioned | An unplaced diagram type lands in an appendix rather than vanishing |
-| **NFR-S2** | No account can read another's work | Ownership checked on every path; a miss returns 404, never 403 |
 | **NFR-S3** | Uploads are data, never instructions | Delimited, with neutralisation of the closing token |
 | **NFR-S4** | Download links signed and expiring | HMAC over id + deadline, constant-time compare |
 | **NFR-Q4** | No unresolved placeholder survives | Asserted over every string in the document AST |
@@ -321,7 +313,7 @@ The model name appears in exactly one file, and a test keeps it that way.
 
 Working end to end and covered by tests: extraction, the review gate, all eight
 mappers, the consistency validator, selective regeneration, SRS assembly, both
-exporters, the template system, auth, and the metrics dashboard.
+exporters, the template system, and the metrics dashboard.
 
 Known gaps, stated plainly:
 
@@ -334,8 +326,6 @@ Known gaps, stated plainly:
 - **The shipped templates are archetypes.** They were reconstructed rather than
   collected from real departments, and each declares this in an `origin` field.
   Swapping in genuine ones is what will actually validate the schema.
-- **Session tokens have no revocation list.** Rotating an account's key
-  invalidates every token minted from it; there is no per-token revoke.
 - **Artefacts live in the database.** A run is under a megabyte, so object
   storage is not yet pulling its weight. The `storage_key` column exists so
   moving to R2 is a backfill rather than a migration of the read path.

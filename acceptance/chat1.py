@@ -1,11 +1,11 @@
 """CHAT-1 — the acceptance test for the chat-driven frontend (P-M6).
 
 AT-1 (SRS §10.1) proves the document pipeline. CHAT-1 proves the surface most
-people will actually use to reach it: register, describe a project in plain
-text, watch extraction happen, ask for a change in chat and see it land
-correctly, confirm the model through the one button that may ever confirm it,
-generate, and export — the signed link at the end downloaded and checked, not
-just assumed to exist.
+people will actually use to reach it: describe a project in plain text, watch
+extraction happen, ask for a change in chat and see it land correctly,
+confirm the model through the one button that may ever confirm it, generate,
+and export — the signed link at the end downloaded and checked, not just
+assumed to exist.
 
 Run it with:
 
@@ -68,21 +68,6 @@ async def _model_reachable() -> bool:
         return True
     except Exception:
         return False
-
-
-async def _entitled_session(client: httpx.AsyncClient) -> tuple[str, dict[str, str]]:
-    """Register, sign in, and return the account id with its auth header —
-    through the real endpoints, exactly as a new user reaches them."""
-    registered = await client.post(f"{BASE}/auth/register", json={})
-    registered.raise_for_status()
-    account = registered.json()
-
-    session = await client.post(
-        f"{BASE}/auth/token",
-        json={"accountId": account["accountId"], "apiKey": account["apiKey"]},
-    )
-    session.raise_for_status()
-    return account["accountId"], {"Authorization": f"Bearer {session.json()['token']}"}
 
 
 async def _poll(
@@ -167,8 +152,8 @@ async def run_chat1() -> Report:
     text = DESCRIPTION.read_text(encoding="utf-8")
     report.notes.append(f"input       {len(text.split())}-word description")
     report.notes.append(
-        "pipeline    register -> extract -> chat edit -> confirm -> generate -> "
-        "export, all over real HTTP through the real worker"
+        "pipeline    extract -> chat edit -> confirm -> generate -> export, "
+        "all over real HTTP through the real worker"
     )
 
     # -- structural guards first: fast, deterministic, no network needed ----
@@ -207,12 +192,9 @@ async def run_chat1() -> Report:
 
     project_id = f"chat1_{int(time.time())}"
     deadline = time.perf_counter() + BUDGET_SECONDS
+    auth: dict[str, str] = {}
 
     async with httpx.AsyncClient(timeout=BUDGET_SECONDS) as client:
-        # -- register + sign in ----------------------------------------------
-        account, auth = await _entitled_session(client)
-        report.notes.append(f"account     {account}, signed in")
-
         # -- extraction, narrated ---------------------------------------------
         extraction = await _extract(client, project_id, text, auth, deadline)
         report.add(

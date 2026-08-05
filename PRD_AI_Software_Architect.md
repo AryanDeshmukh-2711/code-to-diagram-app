@@ -6,6 +6,15 @@
 **Date:** 30 July 2026
 **Status:** Draft for review
 
+> **Note (2026-08-05):** This document was written for the project's original
+> commercial-SaaS phase. The project has since pivoted to an open-source,
+> local-first, single-user tool — it runs against the operator's own machine
+> and their own LLM, with no accounts and no billing. The specific
+> pricing/tier/account references below have been corrected to match; the
+> surrounding narrative (competitive positioning, hosted-infrastructure
+> framing) describes that earlier phase and has not been rewritten. CLAUDE.md
+> is the current source of truth for product direction.
+
 ---
 
 ## 1. Summary
@@ -90,7 +99,7 @@ These are deferred deliberately. Each one is a project in itself.
 
 ### 5.1 Primary — "Submission-driven student" (V1 focus)
 
-Final-year / pre-final-year engineering student in a CS/IT programme. Must submit an SRS and a fixed set of UML diagrams for a mini-project or capstone, in a template the department mandates. Time-poor, format-anxious, price-sensitive (₹200–500/semester is acceptable, ₹2000 is not). Highly clustered — one campus contains thousands of them, and they share tools by word of mouth.
+Final-year / pre-final-year engineering student in a CS/IT programme. Must submit an SRS and a fixed set of UML diagrams for a mini-project or capstone, in a template the department mandates. Time-poor, format-anxious, running the tool locally against their own machine and their own LLM. Highly clustered — one campus contains thousands of them, and they share tools by word of mouth.
 
 **Why start here:** urgent, recurring, deadline-driven, easy to reach, and the deliverable format is knowable and finite.
 
@@ -234,10 +243,9 @@ nobody to bill. See CLAUDE.md for the current product direction.
 ## 13. Open Questions
 
 1. Does the canonical-model review step increase output trust enough to justify the added friction — or does it cause drop-off? **Test in M5.**
-2. Will departments buy an institutional licence, or must this stay a direct-to-student product?
-3. Is PDF requirement input actually used, or do users only ever paste text? If the latter, drop PDF from V1 and save a week.
-4. Which specific university templates cover the largest addressable population? Collect real files in M0.
-5. Is DOCX export or PDF export the true must-have? DOCX allows the student to edit afterwards and may matter more.
+2. Is PDF requirement input actually used, or do users only ever paste text? If the latter, drop PDF from V1 and save a week.
+3. Which specific university templates cover the largest addressable population? Collect real files in M0.
+4. Is DOCX export or PDF export the true must-have? DOCX allows the student to edit afterwards and may matter more.
 
 ---
 
