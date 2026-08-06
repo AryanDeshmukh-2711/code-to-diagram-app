@@ -1,18 +1,172 @@
 # AI Software Architect
 
-Turns a project description into a **submission-ready deliverable**: eight UML/ER
-diagrams and a formatted IEEE 830 software requirements specification, exported
-as PDF and DOCX in the template your department mandates.
+**Give it your project idea. Get back all the diagrams and the requirements
+document for your submission — matching each other, ready to hand in.**
 
-The unit of value is a **finished document set**, not a diagram. Competitors sell
-diagram editors; this sells the thing you hand in.
+If you've ever had to submit a Software Requirements Specification (SRS) plus
+a full set of UML diagrams for a college project, you already know the
+annoying part isn't drawing one diagram — it's that the moment you change
+something, you have to go back and fix it in seven other places too, and
+they never quite agree with each other by the time you're done.
 
-**Primary user:** an engineering student who must submit an SRS and a fixed UML
-set in a university template. Time-poor, format-anxious, price-sensitive.
+This tool fixes that by only ever having **one** source of truth. You
+describe your project once, it builds a model from that description, and
+every diagram and every section of the document is generated *from that same
+model* — so they can't disagree with each other, because they were never
+independent in the first place.
+
+It runs entirely on your own computer, using a free local AI model. No
+account, no subscription, no sending your project idea to a company's
+servers.
 
 ---
 
-## The one architectural rule
+## What you get
+
+- **8 UML/ER diagrams**, the standard set most departments ask for:
+
+  | Diagram | In plain terms |
+  |---|---|
+  | Class | What data your system stores, and how the pieces connect |
+  | Use Case | Who uses the system, and what each of them can do |
+  | Sequence | Step by step, who talks to whom to get one task done |
+  | Activity | The flowchart of a process |
+  | State | The stages one thing passes through (an order: Placed → Shipped → Delivered) |
+  | Component | The big building blocks of the software and how they plug together |
+  | Deployment | Which machine/server each part actually runs on |
+  | Entity-Relationship | How your database tables relate to each other |
+
+- **A formatted SRS document** (the IEEE-830 standard most departments
+  require) — numbered sections, table of contents, list of figures, a
+  glossary, and every diagram embedded and captioned in the right place.
+- Exported as **PDF and Word (DOCX)**, in whichever template your department
+  wants — a bound project report with a certificate page, a plain minimal
+  hand-in format, or your own template if you give it one.
+
+## How it works
+
+1. **You give it your project description** — paste text, or drop in a PDF.
+2. **It reads it and builds a model** of your system (the entities, who does
+   what, how things connect) and shows it to you before doing anything else.
+3. **You review it.** Fix a name, add something it missed, confirm it looks
+   right. Nothing gets generated until you approve this step.
+4. **It draws all 8 diagrams and writes the SRS** from that one approved
+   model — then you download the finished PDF or Word document.
+
+## Why this and not just asking a chatbot yourself
+
+- **It won't make things up.** If your description is too thin to describe a
+  real system, it tells you exactly what's missing instead of inventing
+  entities that were never there — so you never submit something that looks
+  finished but is actually fiction.
+- **Everything agrees with everything else**, because every diagram and
+  every document section is drawn from the one model you approved, not
+  generated separately and hoped into consistency.
+- **It's free and it's private.** The default setup uses a local AI model
+  (via [Ollama](https://ollama.com)) running on your own machine — nothing
+  about your project ever leaves your computer, and there's no bill.
+
+---
+
+## Getting started
+
+You'll need two free tools installed first:
+
+1. **[Docker Desktop](https://www.docker.com/products/docker-desktop/)** —
+   packages up every piece of the app (the database, the server, the web
+   page) so you don't have to install any of them yourself.
+2. **[Ollama](https://ollama.com)** — runs the free local AI model. After
+   installing it, pull the model this project uses by default:
+   ```bash
+   ollama pull qwen2.5:7b
+   ```
+
+Then, from the project folder:
+
+```bash
+cp .env.example .env
+```
+
+Generate one required secret (used to sign secure download links) and paste
+it into `.env` as `ASA_SIGNING_SECRET`:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+Start everything:
+
+```bash
+make dev
+```
+
+Create the database tables (first time only):
+
+```bash
+docker compose exec api alembic upgrade head
+```
+
+Open **http://localhost:3000** — that's it, no sign-in, no account. Drop in
+a project description and try it.
+
+Want to check everything is actually working end to end before you trust it
+with a real project? Run the built-in end-to-end check:
+
+```bash
+make at1
+```
+
+```
+  PASS   1. CPM entities                                 8
+  PASS   2. CPM relationships                            9
+  PASS   3. Eight diagrams render                        8 of 8 rendered
+  PASS   4. Every rendered diagram is syntactically valid 8 valid, 0 rejected
+  PASS   5. Entity naming byte-identical across every diagram 99 names, 0 mismatches
+  PASS   6. PDF page count                               18 pages
+  PASS   7. All eight present as numbered, captioned figures 8 figures
+  PASS   8. Cover page carries the project name and author
+  PASS   9. Index entries match the real section and figure numbering
+  PASS  10. DOCX text matches PDF text
+  PASS  11. Total wall time                              7.4s
+  11 passed, 0 failed  ·  wall time 7.4s of 180s budget
+```
+
+> **`make down` deletes your data.** It removes the database volume. Use
+> `docker compose down` instead if you want to stop the app but keep what
+> you've made.
+
+## Frequently asked questions
+
+**Does this cost anything?** No. It runs on your own machine with a free
+local AI model. There's no tier, no subscription, no usage limit.
+
+**Is my project idea private?** By default, yes — the local model runs on
+your computer and nothing is sent anywhere. You can optionally point it at a
+hosted AI provider instead (see [Configuration](#configuration)), in which
+case that provider's own privacy terms apply.
+
+**What if the AI gets something wrong in my model?** You review and edit the
+model before anything is generated — rename things, add what's missing,
+delete what shouldn't be there. Nothing is final until you confirm it.
+
+**Can I use my university's exact template?** Three formats ship built in,
+and adding a new one is just a JSON config file (see
+[Templates](#templates)) — no code changes needed.
+
+**It says my description doesn't have enough detail — why?** This is
+deliberate (see [Why this and not just asking a chatbot yourself](#why-this-and-not-just-asking-a-chatbot-yourself)
+above): rather than guess and hand you something wrong, it tells you
+specifically what's missing so you can add it.
+
+---
+
+## For developers
+
+Everything below this line is for people who want to understand how it's
+built, contribute, or self-host it seriously — not required reading just to
+use the app.
+
+### The one architectural rule
 
 Everything is rendered from the **Canonical Project Model (CPM)**.
 
@@ -35,14 +189,12 @@ The LLM runs **once**, to build the CPM. After the user confirms it, every
 diagram and every document section is rendered *from the CPM*. No artefact is
 ever produced by a separate model call that bypasses it.
 
-This is what guarantees cross-diagram consistency, which is the entire product
-differentiator. Violating it silently destroys the product — so a test asserts
-that no mapper imports an LLM client, and another asserts that no model
-identifier appears anywhere outside the gateway module.
+This is what guarantees cross-diagram consistency, which is the entire
+product differentiator. Violating it silently destroys the product — so a
+test asserts that no mapper imports an LLM client, and another asserts that
+no model identifier appears anywhere outside the gateway module.
 
----
-
-## What it produces
+### What it produces
 
 | | |
 |---|---|
@@ -54,61 +206,7 @@ identifier appears anywhere outside the gateway module.
 A generated 8-diagram document is 18 pages and takes **7.4 seconds** end to end
 against a 180-second budget.
 
----
-
-## Quick start
-
-Requires Docker and Docker Compose. Nothing else — no Python or Node on the host.
-
-```bash
-cp .env.example .env
-```
-
-Set one value in `.env` (everything else has a working local default):
-
-```bash
-python -c "import secrets; print(secrets.token_urlsafe(32))"
-```
-
-Put that in `ASA_SIGNING_SECRET`, then bring the stack up:
-
-```bash
-make dev
-```
-
-Create the schema:
-
-```bash
-docker compose exec api alembic upgrade head
-```
-
-Verify it works end to end:
-
-```bash
-make at1
-```
-
-```
-  PASS   1. CPM entities                                 8
-  PASS   2. CPM relationships                            9
-  PASS   3. Eight diagrams render                        8 of 8 rendered
-  PASS   4. Every rendered diagram is syntactically valid 8 valid, 0 rejected
-  PASS   5. Entity naming byte-identical across every diagram 99 names, 0 mismatches
-  PASS   6. PDF page count                               18 pages
-  PASS   7. All eight present as numbered, captioned figures 8 figures
-  PASS   8. Cover page carries the project name and author
-  PASS   9. Index entries match the real section and figure numbering
-  PASS  10. DOCX text matches PDF text
-  PASS  11. Total wall time                              7.4s
-  11 passed, 0 failed  ·  wall time 7.4s of 180s budget
-```
-
-> **`make down` deletes your data.** It passes `-v`, which removes the Postgres
-> volume. Use `docker compose down` to stop the stack and keep it.
-
----
-
-## Using the API
+### Using the API
 
 No sign-in step — a single-user local tool has no one to authenticate a
 caller against.
@@ -133,9 +231,7 @@ curl -sX POST localhost:8000/projects/my-project/review/seed \
 | `GET  /runs/exports/{id}` | Export status + signed download link |
 | `GET  /metrics` · `/metrics.json` | Funnel dashboard (no third-party SDK) |
 
----
-
-## Architecture
+### Architecture
 
 ```
 ├── api/          FastAPI — HTTP surface, alembic migrations
@@ -167,9 +263,7 @@ case, component, deployment, object, communication or timing diagrams.
 quota, and nothing leaves the machine — which makes "your content is never used
 for training" true by construction rather than by a provider's promise.
 
----
-
-## The guarantees, and how each is held
+### The guarantees, and how each is held
 
 These are not aspirations. Each has a test that fails if it stops being true, and
 several have a planted-regression check proving the test is not vacuous.
@@ -190,7 +284,7 @@ several have a planted-regression check proving the test is not vacuous.
 | **NFR-S4** | Download links signed and expiring | HMAC over id + deadline, constant-time compare |
 | **NFR-Q4** | No unresolved placeholder survives | Asserted over every string in the document AST |
 
-### Two design decisions worth reading
+#### Two design decisions worth reading
 
 **The document AST is a real layer.** `shared/srs/ast.py` knows about sections,
 figures and cross-references and nothing about DOCX or PDF — a test fails if it
@@ -204,9 +298,7 @@ markers and text drawn inside vector figures.
 `FigureRef("fig-class")`, never `"Figure 3"`, and takes its number from the same
 pass that numbers the figure. Move a figure and the sentence follows it.
 
----
-
-## The review gate metric
+### The review gate metric
 
 The most important number in the product, and the one most easily misread.
 
@@ -225,9 +317,7 @@ both come back `rubber_stamped`.
 Raw signals are stored beside the verdict, so history can be re-classified once
 the thresholds are validated against real users.
 
----
-
-## Testing
+### Testing
 
 ```bash
 make test    # 575 shared + 3 api + web suites
@@ -243,9 +333,7 @@ promise broke.
 Tests for the CPM and the consistency validator are written **before** the
 implementation. Diagram renders are never mocked.
 
----
-
-## Templates
+### Templates
 
 Templates are **data**. Adding one is a JSON file in
 `shared/srs/template/builtin/`, read at call time, with no deploy and no code
@@ -268,9 +356,7 @@ two easiest:
 Every difference above is a config value. A test parses the applier's AST and
 fails if it ever names a template id in code.
 
----
-
-## Make targets
+### Make targets
 
 | | |
 |---|---|
@@ -287,9 +373,7 @@ fails if it ever names a template id in code.
 TypeScript types are **generated, never hand-written** — two `--check` guards in
 `make lint` fail if the schema or the generated types drift.
 
----
-
-## Configuration
+### Configuration
 
 Copy `.env.example` to `.env`. Compose supplies local defaults for everything
 except `ASA_SIGNING_SECRET`, which has no default on purpose: a committed one
@@ -307,9 +391,7 @@ LLM_MODEL=qwen2.5:7b
 Any OpenAI-compatible server works too (`LLM_OPENAI_BASE_URL`, `LLM_API_KEY`).
 The model name appears in exactly one file, and a test keeps it that way.
 
----
-
-## Current status
+### Current status
 
 Working end to end and covered by tests: extraction, the review gate, all eight
 mappers, the consistency validator, selective regeneration, SRS assembly, both
@@ -330,23 +412,19 @@ Known gaps, stated plainly:
   storage is not yet pulling its weight. The `storage_key` column exists so
   moving to R2 is a backfill rather than a migration of the read path.
 
-### Not in V1 — deliberately
+#### Not in V1 — deliberately
 
 GitHub/ZIP ingestion and AST parsing · team collaboration and comments · version
 comparison and drift detection · BPMN, customer journey and cloud architecture
 diagrams · HLD/LLD/API docs · AI chat over the project · SSO, on-premise, public
 API.
 
----
-
-## Documents
+### Documents
 
 [`PRD_AI_Software_Architect.md`](PRD_AI_Software_Architect.md) ·
 [`SRS_AI_Software_Architect.md`](SRS_AI_Software_Architect.md) ·
 [`CLAUDE.md`](CLAUDE.md) — project context and working agreement
 
----
-
-## Licence
+### Licence
 
 Not yet chosen. Until one is added, all rights are reserved by the author.
