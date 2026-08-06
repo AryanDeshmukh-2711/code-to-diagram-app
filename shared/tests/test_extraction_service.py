@@ -60,12 +60,6 @@ async def test_vague_input_returns_insufficient_rather_than_a_model() -> None:
     assert isinstance(result, InsufficientInput)
 
 
-async def test_the_vague_sample_is_long_enough_for_the_floor_to_apply() -> None:
-    # If it were 20 words, length alone would reject it and the test would be
-    # proving nothing about fabrication.
-    assert VAGUE.word_count >= 200
-
-
 async def test_insufficient_reports_what_it_actually_found() -> None:
     result = await run("vague_startup")
     assert isinstance(result, InsufficientInput)
@@ -144,11 +138,28 @@ async def test_an_empty_model_is_insufficient_regardless_of_length() -> None:
 
 
 async def test_a_short_but_concrete_description_is_accepted() -> None:
-    # Under 200 words, so the FR-5 floor does not apply. Rejecting this would
-    # be over-correction: it describes a real system in few words.
+    # Under 200 words, but the floor is about what was found, not how long
+    # the description was — three clean entities and two relationships from
+    # a few sentences is a real system, not something to reject for brevity.
     sample = BY_KEY["parking_lot"]
     assert sample.word_count < 200
     assert isinstance(await run("parking_lot"), Extracted)
+
+
+async def test_a_short_input_with_a_thin_model_still_fails_the_floor() -> None:
+    # The bug this guards against: a description under the old 200-word
+    # threshold used to skip the floor check entirely, so a short input that
+    # extracted to only one or two entities reached "ready to confirm" with
+    # no warning at all — a real, reported failure mode, not a hypothetical.
+    sample = BY_KEY["parking_lot"]
+    assert sample.word_count < 200
+    payload = copy.deepcopy(sample.llm_output)
+    payload["entities"] = payload["entities"][:2]
+    payload["relationships"] = []
+    result = await run("parking_lot", payload=payload)
+    assert isinstance(result, InsufficientInput), (
+        "a short description must not bypass the FR-5 floor"
+    )
 
 
 # --------------------------------------------------------------------------

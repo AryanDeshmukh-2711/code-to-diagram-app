@@ -18,14 +18,12 @@ from extraction.normalise import (
 )
 from extraction.result import Extracted, ExtractionResult, InsufficientInput
 from extraction.service import (
-    FLOOR_WORD_COUNT,
     MIN_ENTITIES,
     MIN_RELATIONSHIPS,
     ExtractionService,
 )
 
 __all__ = [
-    "FLOOR_WORD_COUNT",
     "MIN_ENTITIES",
     "MIN_RELATIONSHIPS",
     "Extracted",
