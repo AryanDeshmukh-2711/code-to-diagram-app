@@ -16,13 +16,15 @@ from llm.gateway import LLMGateway
 
 logger = logging.getLogger(__name__)
 
-FLOOR_WORD_COUNT = 200
-"""FR-5 applies to inputs of at least this many words. Below it, a terse but
-concrete description is accepted — over-rejecting a real system described in
-few words would be its own failure."""
-
 MIN_ENTITIES = 3
 MIN_RELATIONSHIPS = 2
+"""Applied to every extraction regardless of input length. A short-but-concrete
+description (few words, a clean 3+ entities and 2+ relationships) already
+clears this on its own merits — length was never the thing worth gating on.
+Gating the floor behind a word count let a description of any length under
+the old threshold reach confirm with as few as one entity and zero
+relationships, silently, with no guidance: exactly the thin, broken model
+FR-5 exists to catch."""
 
 
 class ExtractionService:
@@ -89,15 +91,13 @@ def _check_floor(collections: CPMCollections, word_count: int) -> InsufficientIn
             guidance=_guidance(collections),
         )
 
-    if word_count >= FLOOR_WORD_COUNT and (
-        entities < MIN_ENTITIES or relationships < MIN_RELATIONSHIPS
-    ):
+    if entities < MIN_ENTITIES or relationships < MIN_RELATIONSHIPS:
         return InsufficientInput(
             reason=(
-                f"The description is {word_count} words long but only {entities} "
-                f"entit{'y' if entities == 1 else 'ies'} and {relationships} "
-                f"relationship{'' if relationships == 1 else 's'} could be identified. "
-                "It describes intent rather than a system."
+                f"Only {entities} entit{'y' if entities == 1 else 'ies'} and "
+                f"{relationships} relationship{'' if relationships == 1 else 's'} could be "
+                f"identified from the description ({word_count} words). It describes intent "
+                "rather than a system."
             ),
             word_count=word_count,
             entities_found=entities,
