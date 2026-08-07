@@ -8,6 +8,8 @@
  * working.
  */
 
+import { getLlmApiKey } from "./llmKey";
+
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
 export class ApiError extends Error {
@@ -42,6 +44,11 @@ type RequestOptions = {
 
 export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const headers: Record<string, string> = {};
+
+  const llmApiKey = getLlmApiKey();
+  if (llmApiKey) {
+    headers["X-LLM-Api-Key"] = llmApiKey;
+  }
 
   let body: BodyInit | undefined;
   if (options.body !== undefined) {

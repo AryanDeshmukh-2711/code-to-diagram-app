@@ -2,6 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, apiFetch } from "./client";
 
+vi.mock("./llmKey", () => ({ getLlmApiKey: vi.fn(() => null) }));
+
+import { getLlmApiKey } from "./llmKey";
+
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -11,6 +15,30 @@ function jsonResponse(status: number, body: unknown): Response {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.mocked(getLlmApiKey).mockReturnValue(null);
+});
+
+describe("apiFetch: BYO LLM key header", () => {
+  it("attaches X-LLM-Api-Key when a key is stored", async () => {
+    vi.mocked(getLlmApiKey).mockReturnValue("gsk_test_key");
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, {}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await apiFetch("/projects/p1/chat", { method: "POST", body: { message: "hi" } });
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers["X-LLM-Api-Key"]).toBe("gsk_test_key");
+  });
+
+  it("sends no key header at all when none is stored", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, {}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await apiFetch("/runs/r1");
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers["X-LLM-Api-Key"]).toBeUndefined();
+  });
 });
 
 describe("apiFetch: other failures", () => {
