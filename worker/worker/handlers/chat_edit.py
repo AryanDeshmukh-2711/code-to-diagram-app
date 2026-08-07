@@ -16,8 +16,13 @@ async def parse_chat_edit(ctx: dict[str, Any], edit_id: str) -> dict[str, Any]:
     """Run one chat edit-intent request."""
     from generation.chat_edit import ChatEditNotFound, run_chat_edit
 
+    # Read-once handoff from the API: staged under this same id, consumed
+    # exactly here, never persisted, never an arq job argument. Never log it.
+    raw_key = await ctx["redis"].getdel(f"llmkey:{edit_id}")
+    api_key = raw_key.decode() if isinstance(raw_key, bytes) else raw_key
+
     try:
-        outcome = await run_chat_edit(edit_id)
+        outcome = await run_chat_edit(edit_id, api_key_override=api_key)
     except ChatEditNotFound:
         logger.error("chat edit %s no longer exists", edit_id)
         return {"editId": edit_id, "status": "missing"}

@@ -210,11 +210,21 @@ def _format_validation_error(exc: Exception) -> str:
     return f"- response was not valid JSON: {exc}"
 
 
-def build_default_gateway(sink: CallSink | None = None) -> LLMGateway:
+def build_default_gateway(
+    sink: CallSink | None = None,
+    api_key_override: str | None = None,
+) -> LLMGateway:
     """A gateway wired from the environment.
 
     Both adapters are registered, so switching backend is an LLM_PROVIDER
     change with no code edit anywhere (NFR-M1).
+
+    ``api_key_override``, when given, takes the openai_compatible provider's
+    bearer token in place of ``LLM_API_KEY`` for this one gateway instance —
+    a hosted deployment's visitor-supplied key, staged and read back through
+    Redis (never persisted, never an arq job argument, never logged). The
+    provider, base URL and model stay whatever the operator configured; only
+    the credential varies per caller.
     """
     import os
 
@@ -229,7 +239,7 @@ def build_default_gateway(sink: CallSink | None = None) -> LLMGateway:
     if openai_base_url:
         providers["openai_compatible"] = OpenAICompatibleProvider(
             base_url=openai_base_url,
-            api_key=os.getenv("LLM_API_KEY") or None,
+            api_key=api_key_override or (os.getenv("LLM_API_KEY") or None),
         )
 
     return LLMGateway(providers=providers, sink=sink)

@@ -46,6 +46,7 @@ async def run_extraction(
     extraction_id: str,
     session_factory=SessionFactory,
     service: ExtractionService | None = None,
+    api_key_override: str | None = None,
 ) -> ExtractionOutcome:
     started = datetime.now(UTC)
 
@@ -92,7 +93,9 @@ async def run_extraction(
         if not text or not text.strip():
             raise ValueError("no text could be extracted from the upload")
 
-        extraction_service = service or ExtractionService(build_default_gateway())
+        extraction_service = service or ExtractionService(
+            build_default_gateway(api_key_override=api_key_override)
+        )
         result = await extraction_service.extract(
             text,
             project_name=project_name or project_id,

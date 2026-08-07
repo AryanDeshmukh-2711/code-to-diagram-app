@@ -40,6 +40,7 @@ async def run_chat_edit(
     edit_id: str,
     session_factory=SessionFactory,
     service: ChatEditService | None = None,
+    api_key_override: str | None = None,
 ) -> ChatEditOutcome:
     started = datetime.now(UTC)
 
@@ -75,7 +76,9 @@ async def run_chat_edit(
         if draft_row is None:
             raise ValueError(f"no model is being reviewed for project {project_id!r}")
         draft = CPMDraft.model_validate(draft_row.payload)
-        chat_service = service or ChatEditService(build_default_gateway())
+        chat_service = service or ChatEditService(
+            build_default_gateway(api_key_override=api_key_override)
+        )
         parsed = await chat_service.parse(message, draft, user_id=account_id)
     except Exception as exc:
         status = "failed"

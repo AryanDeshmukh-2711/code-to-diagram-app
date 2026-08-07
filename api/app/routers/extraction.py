@@ -22,7 +22,7 @@ from typing import Any
 from arq import create_pool
 from arq.connections import RedisSettings
 from extraction.pdf_text import PdfRejected, probe_pdf
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from store.models import ExtractionRow
@@ -78,6 +78,7 @@ async def start_extraction(
     file: UploadFile | None = File(default=None),  # noqa: B008 -- FastAPI's DI marker, not a mutable default
     projectName: str = Form(default=""),
     previousExtractionId: str | None = Form(default=None),
+    x_llm_api_key: str | None = Header(default=None, alias="X-LLM-Api-Key"),
 ) -> ExtractionOut:
     """Queue an extraction from pasted text or an uploaded PDF. 202; nothing
     is rendered or sent to a model here (C-4).
@@ -151,6 +152,17 @@ async def start_extraction(
 
     pool = await create_pool(RedisSettings.from_dsn(get_settings().redis_url))
     try:
+        if x_llm_api_key:
+            # Staged for the worker job to read exactly once (GETDEL) and
+            # never for longer than this. Never persisted, never logged, never
+            # a job argument (arq logs job args). See shared/llm/gateway.py.
+            try:
+                await pool.setex(f"llmkey:{extraction_id}", 600, x_llm_api_key)
+            except Exception as exc:
+                raise HTTPException(
+                    status.HTTP_502_BAD_GATEWAY,
+                    detail="could not stage the API key; please try again",
+                ) from exc
         await pool.enqueue_job(
             "extract_cpm",
             extraction_id,

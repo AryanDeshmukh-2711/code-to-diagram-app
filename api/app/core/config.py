@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379/0"
     plantuml_server_url: str = "http://plantuml:8080"
 
+    # Comma-separated. Defaults to local dev's web origin; a hosted deployment
+    # sets this to its real public web domain.
+    cors_allowed_origins: str = "http://localhost:3000"
+
     # Per-dependency ceiling for the /health probes. Kept short so an unhealthy
     # dependency surfaces as a fast 503 rather than a hanging request.
     health_probe_timeout_seconds: float = 3.0

@@ -15,7 +15,7 @@ from typing import Any
 
 from arq import create_pool
 from arq.connections import RedisSettings
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Header, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from store.models import ChatEditRow, CPMDraftRow, ProjectRow
@@ -64,7 +64,11 @@ def _snapshot(row: ChatEditRow) -> ChatEditOut:
 
 
 @router.post("", response_model=ChatEditOut, status_code=status.HTTP_202_ACCEPTED)
-async def send_message(project_id: str, body: ChatMessageIn) -> ChatEditOut:
+async def send_message(
+    project_id: str,
+    body: ChatMessageIn,
+    x_llm_api_key: str | None = Header(default=None, alias="X-LLM-Api-Key"),
+) -> ChatEditOut:
     """Queue one chat message for parsing. 202; nothing is parsed or applied
     here (C-4)."""
     if not body.message.strip():
@@ -91,6 +95,17 @@ async def send_message(project_id: str, body: ChatMessageIn) -> ChatEditOut:
 
     pool = await create_pool(RedisSettings.from_dsn(get_settings().redis_url))
     try:
+        if x_llm_api_key:
+            # Staged for the worker job to read exactly once (GETDEL) and
+            # never for longer than this. Never persisted, never logged, never
+            # a job argument (arq logs job args). See shared/llm/gateway.py.
+            try:
+                await pool.setex(f"llmkey:{edit_id}", 600, x_llm_api_key)
+            except Exception as exc:
+                raise HTTPException(
+                    status.HTTP_502_BAD_GATEWAY,
+                    detail="could not stage the API key; please try again",
+                ) from exc
         await pool.enqueue_job(
             "parse_chat_edit",
             edit_id,

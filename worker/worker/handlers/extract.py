@@ -17,8 +17,13 @@ async def extract_cpm(ctx: dict[str, Any], extraction_id: str) -> dict[str, Any]
     """Run one extraction request."""
     from generation.extraction import ExtractionNotFound, run_extraction
 
+    # Read-once handoff from the API: staged under this same id, consumed
+    # exactly here, never persisted, never an arq job argument. Never log it.
+    raw_key = await ctx["redis"].getdel(f"llmkey:{extraction_id}")
+    api_key = raw_key.decode() if isinstance(raw_key, bytes) else raw_key
+
     try:
-        outcome = await run_extraction(extraction_id)
+        outcome = await run_extraction(extraction_id, api_key_override=api_key)
     except ExtractionNotFound:
         # Nothing to retry: the request is gone.
         logger.error("extraction %s no longer exists", extraction_id)
