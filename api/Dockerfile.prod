@@ -1,7 +1,10 @@
 # Same repo-root build context as api/Dockerfile — see that file's comment
 # (the image needs shared/ so the CPM has exactly one definition). This is
 # the production variant: no --reload, no [dev] extras, and migrations run
-# on every boot, since Railway has no separate release-phase step.
+# on every boot, since most PaaS/serverless platforms (this targets Google
+# Cloud Run — see DEPLOY.md) have no separate release-phase step. Reads
+# $PORT rather than a hardcoded port, matching Cloud Run's convention of
+# injecting it at container start.
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
@@ -21,6 +24,6 @@ EXPOSE 8000
 
 # alembic upgrade head is idempotent (no-ops once already at head), so
 # running it on every boot is the simplest reliable stand-in for a
-# release-phase step Railway doesn't have. WORKDIR must stay /srv/api —
+# release-phase step Cloud Run doesn't have. WORKDIR must stay /srv/api —
 # alembic.ini's script_location is a relative path.
 CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

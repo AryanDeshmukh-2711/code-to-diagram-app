@@ -1,0 +1,30 @@
+# Same repo-root build context as worker/Dockerfile — see that file's
+# comment. Production variant: no [dev] extras. No --reload-equivalent
+# concern here, since arq has no dev/prod distinction of its own.
+#
+# This image is meant to run as a Google Cloud Run Job (see DEPLOY.md), not
+# an always-on Cloud Run service: Cloud Run has no free way to keep a
+# process alive just to poll Redis forever, the way Docker Compose or a
+# real VM would. Instead, a Cloud Scheduler cron invokes this image on an
+# interval with its command overridden to add `--burst` (arq's "drain
+# whatever's queued, then exit" mode) — the Job configuration supplies that
+# override, so the default CMD below stays the plain always-running form
+# for anyone running this image somewhere that *can* host a persistent
+# process.
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /srv
+
+COPY shared/ /srv/shared/
+RUN pip install --no-cache-dir -e /srv/shared
+
+COPY worker/ /srv/worker/
+RUN pip install --no-cache-dir -e /srv/worker
+
+WORKDIR /srv/worker
+
+CMD ["arq", "worker.main.WorkerSettings"]
