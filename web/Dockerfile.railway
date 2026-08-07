@@ -1,0 +1,43 @@
+# Build context is the REPO ROOT, matching api/Dockerfile.railway and
+# worker/Dockerfile.railway — one build-context convention across all three
+# Railway services, not two. The dev web/Dockerfile runs `next dev` with no
+# build stage at all; this is a real production build.
+FROM node:22-alpine AS deps
+WORKDIR /app
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+
+FROM node:22-alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY web/ ./
+
+# Next.js inlines NEXT_PUBLIC_* values at build time, not runtime — they
+# have to be build args here, not just env vars on the running container.
+ARG NEXT_PUBLIC_API_BASE_URL
+ARG NEXT_PUBLIC_LLM_PROVIDER_LABEL
+ARG NEXT_PUBLIC_LLM_PROVIDER_SIGNUP_URL
+ARG NEXT_PUBLIC_LLM_KEY_REQUIRED
+ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL \
+    NEXT_PUBLIC_LLM_PROVIDER_LABEL=$NEXT_PUBLIC_LLM_PROVIDER_LABEL \
+    NEXT_PUBLIC_LLM_PROVIDER_SIGNUP_URL=$NEXT_PUBLIC_LLM_PROVIDER_SIGNUP_URL \
+    NEXT_PUBLIC_LLM_KEY_REQUIRED=$NEXT_PUBLIC_LLM_KEY_REQUIRED
+
+# Skips the "prebuild" npm lifecycle script (gen:types:check), which diffs
+# generated types against ../schemas/cpm.schema.json — a dev-time drift
+# guard, not something a production build needs to re-verify. The checked-in
+# src/lib/cpm.generated.ts is already what `next build` compiles against.
+RUN npx next build
+
+FROM node:22-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+# No web/public directory exists in this app (no static assets to serve
+# outside what Next.js itself emits) — nothing to copy here.
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+
+EXPOSE 3000
+# Railway assigns PORT at runtime; Next's standalone server.js already reads
+# it (falls back to 3000 when unset, e.g. running this image locally).
+CMD ["node", "server.js"]
