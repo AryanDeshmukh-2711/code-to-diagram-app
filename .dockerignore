@@ -13,5 +13,5 @@ node_modules
 .next
 out
 docs
-*.md
+*.md 
 !README.md
