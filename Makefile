@@ -23,7 +23,7 @@ test: ## Run api, shared and web test suites
 	$(COMPOSE) run --rm --no-deps api pytest -q ../shared/tests
 	$(COMPOSE) run --rm --no-deps web npm run test -- --run
 
-# AT-1 is the acceptance test, not a unit test: it needs the database, the
+# AT-1 is the acceptance test, not a unit test: it needs the database, the 
 # queue, the worker and the diagram engines, so it runs against a live stack.
 at1: ## Run acceptance test AT-1 end to end (SRS 10.1)
 	$(COMPOSE) up -d postgres redis plantuml api worker
