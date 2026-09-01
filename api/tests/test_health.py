@@ -36,7 +36,7 @@ async def test_health_reports_all_three_dependencies(
             dependencies=[
                 DependencyStatus(name="postgres", ok=True, latency_ms=1.0),
                 DependencyStatus(name="redis", ok=True, latency_ms=1.0),
-                DependencyStatus(name="plantuml", ok=True, latency_ms=1.0),
+                DependencyStatus(name="plantuml", ok=True, latency_ms=1.0 ),
             ],
         )
 
